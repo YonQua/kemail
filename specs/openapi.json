@@ -1,0 +1,1439 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "kemail API",
+    "version": "1.0.0",
+    "description": "kemail 的完整接口契约源，包含对外集成接口与后台管理接口。构建阶段会从这份源规格派生公开的 `/openapi.json` / `/api-docs`，以及管理员受保护的内部文档入口。"
+  },
+  "servers": [
+    {
+      "url": "https://mail.example.com",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "external",
+      "description": "第三方业务、自动化脚本和 AI 最常用的接入接口。它们优先关注“发地址、查最新地址、列出邮件、读取详情”这几条主链路。",
+      "x-title": "对外集成接口",
+      "x-kicker": "External Integration"
+    },
+    {
+      "name": "admin-mail",
+      "description": "邮件写操作与原始内容读取，主要供后台管理、清理和调试使用。",
+      "x-title": "后台管理接口 · 邮件管理",
+      "x-kicker": "Admin Mail Ops"
+    },
+    {
+      "name": "admin-analytics",
+      "description": "数据看板使用的统计接口，带短 TTL 缓存，适合后台看板与运营监控。",
+      "x-title": "后台管理接口 · 数据看板",
+      "x-kicker": "Admin Analytics"
+    },
+    {
+      "name": "admin-domains",
+      "description": "域名池同步、启停和发号接口，主要供后台运维与域名池治理使用。",
+      "x-title": "后台管理接口 · 域名池管理",
+      "x-kicker": "Admin Domain Pool"
+    }
+  ],
+  "x-docs": {
+    "responseEnvelope": "所有接口默认返回 `{ ok: true, ... }` 或 `{ ok: false, error: \"...\" }`。文档页默认展示成功示例，并列出常见错误状态码。",
+    "contractInfo": "仓库中的 `specs/openapi.json` 是单一契约源；构建产物会拆分为公开的 `/openapi.json` / `/api-docs`，以及管理员可见的内部文档入口。",
+    "quickstart": [
+      {
+        "method": "post",
+        "path": "/api/addresses/generate",
+        "kicker": "Step 1",
+        "title": "生成一个完整邮箱地址",
+        "description": "推荐的发号入口。返回完整邮箱地址，后续查询时直接把这个地址原样传回即可。"
+      },
+      {
+        "method": "get",
+        "path": "/api/latest",
+        "kicker": "Step 2",
+        "title": "查询最新地址邮件",
+        "description": "最适合验证码和登录流程的轮询接口。传入完整邮箱地址，直接拿最近一封邮件。"
+      },
+      {
+        "method": "get",
+        "path": "/api/emails",
+        "kicker": "Step 3",
+        "title": "列出一个邮箱的邮件列表",
+        "description": "适合回溯历史邮件、调试收信和做多封邮件展示。支持地址、时间、关键词等过滤参数。"
+      }
+    ]
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API Key",
+        "description": "统一使用 `Authorization: Bearer <TOKEN>`。对外接入场景下，`READ_API_KEY` 与 `ADMIN_API_KEY` 都可用于发号、查信和删信；星标、标记已读、富解析、原始 MIME 与域名池管理仍需管理员密钥。"
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": ["ok", "error"]
+      },
+      "EmailSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "recipient": {
+            "type": "string",
+            "format": "email"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_read": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "is_starred": {
+            "type": "integer",
+            "enum": [0, 1]
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "sender",
+          "subject",
+          "preview",
+          "received_at",
+          "is_read",
+          "is_starred"
+        ]
+      },
+      "EmailListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "recipient": {
+            "type": "string",
+            "format": "email"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_read": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "is_starred": {
+            "type": "integer",
+            "enum": [0, 1]
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "sender",
+          "subject",
+          "body",
+          "preview",
+          "received_at",
+          "is_read",
+          "is_starred"
+        ]
+      },
+      "HeaderItem": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": ["key", "value"]
+      },
+      "AttachmentItem": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": ["filename", "content_type", "content_id", "size"]
+      },
+      "ActionLink": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": ["label", "url"]
+      },
+      "EmailDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "recipient": {
+            "type": "string",
+            "format": "email"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "is_read": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "is_starred": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "preview": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "body_text": {
+            "type": "string"
+          },
+          "body_html": {
+            "type": "string"
+          },
+          "body_source": {
+            "type": "string"
+          },
+          "raw_available": {
+            "type": "boolean"
+          },
+          "source_available": {
+            "type": "boolean"
+          },
+          "rich_available": {
+            "type": "boolean"
+          },
+          "rich_enabled": {
+            "type": "boolean"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeaderItem"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentItem"
+            }
+          },
+          "action_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionLink"
+            }
+          },
+          "parser": {
+            "type": "string"
+          },
+          "parser_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "sender",
+          "subject",
+          "received_at",
+          "is_read",
+          "is_starred",
+          "preview",
+          "body",
+          "body_text",
+          "body_html",
+          "body_source",
+          "raw_available",
+          "source_available",
+          "rich_available",
+          "rich_enabled",
+          "headers",
+          "attachments",
+          "action_links",
+          "parser",
+          "parser_version"
+        ]
+      },
+      "EmailSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "source_available": {
+            "type": "boolean"
+          },
+          "raw_available": {
+            "type": "boolean"
+          },
+          "body_source": {
+            "type": "string"
+          },
+          "parser_version": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "source_available", "raw_available", "body_source", "parser_version"]
+      },
+      "ManagedDomain": {
+        "type": "object",
+        "properties": {
+          "zone_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "zone_status": {
+            "type": "string"
+          },
+          "issuable_enabled": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "last_synced_at": {
+            "type": "string"
+          },
+          "sync_error": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "zone_id",
+          "domain",
+          "zone_status",
+          "issuable_enabled",
+          "last_synced_at",
+          "sync_error",
+          "note"
+        ]
+      }
+    }
+  },
+  "paths": {
+    "/api/addresses/generate": {
+      "post": {
+        "tags": ["external"],
+        "summary": "生成一个完整邮箱地址",
+        "description": "推荐的发号入口。返回完整邮箱地址，客户端后续查询时直接把这个地址原样传回即可。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用。",
+        "operationId": "generateAddress",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 10,
+        "responses": {
+          "200": {
+            "description": "成功生成完整邮箱地址",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email"
+                    },
+                    "domain": {
+                      "type": "string"
+                    },
+                    "local_part": {
+                      "type": "string"
+                    },
+                    "issued_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": ["ok", "email", "domain", "local_part", "issued_at"]
+                },
+                "example": {
+                  "ok": true,
+                  "email": "oc8f3ab12cd@example.test",
+                  "domain": "example.test",
+                  "local_part": "oc8f3ab12cd",
+                  "issued_at": "2026-03-21T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "409": {
+            "description": "当前没有可发放的 active 域名"
+          },
+          "429": {
+            "description": "请求过快，触发写操作限流"
+          }
+        }
+      }
+    },
+    "/api/latest": {
+      "get": {
+        "tags": ["external"],
+        "summary": "查询某个邮箱最新地址邮件",
+        "description": "最适合验证码轮询的接口。必须传完整邮箱地址，不支持只传 local-part。",
+        "operationId": "getLatestEmail",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 20,
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": true,
+            "description": "完整邮箱地址，例如 `oc8f3ab12cd@example.test`。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "oc8f3ab12cd@example.test"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回最新地址邮件；如果还没收到邮件，`email` 为 null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "email": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/EmailListItem"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["ok", "email"]
+                },
+                "example": {
+                  "ok": true,
+                  "email": {
+                    "id": 777,
+                    "recipient": "oc8f3ab12cd@example.test",
+                    "sender": "noreply@tm.openai.com",
+                    "subject": "你的 ChatGPT 代码为 014684",
+                    "body": "输入此临时验证码以继续：\n014684\n如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "preview": "输入此临时验证码以继续： 014684 如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "received_at": "2026-03-21T09:02:03.530Z",
+                    "is_read": 0,
+                    "is_starred": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少 address 参数"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "429": {
+            "description": "请求过快，触发读取限流"
+          }
+        }
+      }
+    },
+    "/api/emails": {
+      "get": {
+        "tags": ["external"],
+        "summary": "列出邮件列表",
+        "description": "支持按地址、发件人、主题、关键字、时间范围和排序方式查询。若 `summary=1`，返回更轻量的摘要结构。",
+        "operationId": "listEmails",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 30,
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": false,
+            "description": "完整收件邮箱地址。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "oc8f3ab12cd@example.test"
+          },
+          {
+            "name": "sender",
+            "in": "query",
+            "required": false,
+            "description": "按发件人过滤。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "noreply@tm.openai.com"
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "description": "按主题过滤。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "ChatGPT"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "全文关键字检索。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "014684"
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "description": "起始时间，ISO 格式。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "2026-03-20T00:00:00.000Z"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "description": "结束时间，ISO 格式。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "2026-03-21T23:59:59.999Z"
+          },
+          {
+            "name": "since_id",
+            "in": "query",
+            "required": false,
+            "description": "仅返回 ID 大于该值的邮件。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 700
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "排序方式。",
+            "schema": {
+              "type": "string",
+              "enum": ["desc", "asc"]
+            },
+            "example": "desc"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "返回条数上限，最大 100。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 20
+          },
+          {
+            "name": "summary",
+            "in": "query",
+            "required": false,
+            "description": "传 `1` 时返回轻量摘要结构。",
+            "schema": {
+              "type": "string",
+              "enum": ["1"]
+            },
+            "example": "1"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回邮件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "emails": {
+                      "type": "array",
+                      "items": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/EmailListItem"
+                          },
+                          {
+                            "$ref": "#/components/schemas/EmailSummary"
+                          }
+                        ]
+                      }
+                    },
+                    "permissions": {
+                      "type": "object",
+                      "properties": {
+                        "admin": {
+                          "type": "boolean",
+                          "description": "当前 Bearer Token 是否具备管理员权限。"
+                        }
+                      },
+                      "required": ["admin"]
+                    }
+                  },
+                  "required": ["ok", "emails", "permissions"]
+                },
+                "example": {
+                  "ok": true,
+                  "permissions": {
+                    "admin": false
+                  },
+                  "emails": [
+                    {
+                      "id": 777,
+                      "recipient": "oc8f3ab12cd@example.test",
+                      "sender": "noreply@tm.openai.com",
+                      "subject": "你的 ChatGPT 代码为 014684",
+                      "preview": "输入此临时验证码以继续： 014684 如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                      "received_at": "2026-03-21T09:02:03.530Z",
+                      "is_read": 0,
+                      "is_starred": 0
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "429": {
+            "description": "请求过快，触发读取限流"
+          }
+        }
+      }
+    },
+    "/api/emails/{id}": {
+      "get": {
+        "tags": ["external"],
+        "summary": "读取单封邮件详情",
+        "description": "默认返回轻量详情；若传 `rich=1`，则需要管理员密钥并尝试返回富解析内容。",
+        "operationId": "getEmailDetail",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 40,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 777
+          },
+          {
+            "name": "rich",
+            "in": "query",
+            "required": false,
+            "description": "传 `1` 时请求富解析详情，需要管理员密钥。",
+            "schema": {
+              "type": "string",
+              "enum": ["1"]
+            },
+            "example": "1"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回单封邮件详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "email": {
+                      "$ref": "#/components/schemas/EmailDetail"
+                    }
+                  },
+                  "required": ["ok", "email"]
+                },
+                "example": {
+                  "ok": true,
+                  "email": {
+                    "id": 777,
+                    "recipient": "oc8f3ab12cd@example.test",
+                    "sender": "noreply@tm.openai.com",
+                    "subject": "你的 ChatGPT 代码为 014684",
+                    "received_at": "2026-03-21T09:02:03.530Z",
+                    "is_read": 0,
+                    "is_starred": 0,
+                    "preview": "输入此临时验证码以继续： 014684 如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "body": "输入此临时验证码以继续： 014684 如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "body_text": "输入此临时验证码以继续：\n014684\n如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "body_html": "",
+                    "body_source": "",
+                    "raw_available": false,
+                    "source_available": true,
+                    "rich_available": false,
+                    "rich_enabled": false,
+                    "headers": [],
+                    "attachments": [],
+                    "action_links": [],
+                    "parser": "stored-lite",
+                    "parser_version": "wasm-v1"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "请求 rich=1 时当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "邮件不存在"
+          },
+          "429": {
+            "description": "请求过快，触发读取或富解析限流"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["external"],
+        "summary": "删除单封邮件",
+        "description": "对外删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；删除后会同步清理富解析缓存，并在必要时刷新 latest 缓存。",
+        "operationId": "deleteEmail",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 20,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 777
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "deleted": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["ok", "deleted"]
+                },
+                "example": {
+                  "ok": true,
+                  "deleted": "777"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "404": {
+            "description": "邮件不存在"
+          }
+        }
+      }
+    },
+    "/api/emails/{id}/source": {
+      "get": {
+        "tags": ["admin-mail"],
+        "summary": "读取单封邮件原始 MIME",
+        "description": "仅管理员可用。若原始内容未保存或超出保存上限，会返回 404。",
+        "operationId": "getEmailSource",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 10,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 777
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回原始 MIME 内容",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "source": {
+                      "$ref": "#/components/schemas/EmailSource"
+                    }
+                  },
+                  "required": ["ok", "source"]
+                },
+                "example": {
+                  "ok": true,
+                  "source": {
+                    "id": 777,
+                    "source_available": true,
+                    "raw_available": true,
+                    "body_source": "From: noreply@tm.openai.com\nTo: oc8f3ab12cd@example.test\nSubject: 你的 ChatGPT 代码为 014684\n\n输入此临时验证码以继续：\n014684",
+                    "parser_version": "wasm-v1"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "邮件不存在，或原始内容不可用"
+          }
+        }
+      }
+    },
+    "/api/emails/delete": {
+      "post": {
+        "tags": ["external"],
+        "summary": "批量删除邮件",
+        "description": "对外批量删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；`ids` 不能为空，且单次最多 100 个。",
+        "operationId": "deleteEmailsBatch",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 30,
+        "requestBody": {
+          "required": true,
+          "description": "要删除的邮件 ID 列表。",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "required": ["ids"]
+              },
+              "example": {
+                "ids": [777, 778]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功删除部分或全部目标邮件",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "deleted": ["777", "778"],
+                  "missing": [],
+                  "deleted_count": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少 ids、ids 非法或超过上限"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          }
+        }
+      }
+    },
+    "/api/emails/read": {
+      "put": {
+        "tags": ["admin-mail"],
+        "summary": "批量更新已读状态",
+        "description": "管理员写接口。更新后会刷新受影响收件人的 latest 缓存。",
+        "operationId": "updateEmailsReadState",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 40,
+        "requestBody": {
+          "required": true,
+          "description": "要更新的邮件 ID 列表和目标已读值。",
+          "content": {
+            "application/json": {
+              "example": {
+                "ids": [777, 778],
+                "read": 1
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "updated": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少 ids、ids 非法或请求体不是合法 JSON"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          }
+        }
+      }
+    },
+    "/api/emails/star": {
+      "put": {
+        "tags": ["admin-mail"],
+        "summary": "批量更新星标状态",
+        "description": "管理员写接口。更新后会刷新受影响收件人的 latest 缓存。",
+        "operationId": "updateEmailsStarState",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 50,
+        "requestBody": {
+          "required": true,
+          "description": "要更新的邮件 ID 列表和目标星标值。",
+          "content": {
+            "application/json": {
+              "example": {
+                "ids": [777, 778],
+                "starred": 1
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "updated": 2
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少 ids、ids 非法或请求体不是合法 JSON"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          }
+        }
+      }
+    },
+    "/api/analysis/summary": {
+      "get": {
+        "tags": ["admin-analytics"],
+        "summary": "读取数据看板汇总统计",
+        "description": "返回“当前状态 + 历史统计”的混合汇总。`total/currentTotal` 表示当前保留邮件，`totalReceived/today/todayReceived/last7Days/last7DaysReceived` 表示历史聚合结果。结果会带 20 秒短缓存。",
+        "operationId": "getAnalysisSummary",
+        "x-permission": "read",
+        "x-scope": "admin",
+        "x-order": 10,
+        "responses": {
+          "200": {
+            "description": "成功返回汇总统计",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "summary": {
+                    "total": 40,
+                    "currentTotal": 40,
+                    "totalReceived": 128,
+                    "today": 8,
+                    "todayReceived": 8,
+                    "last7Days": 31,
+                    "last7DaysReceived": 31,
+                    "unread": 4,
+                    "starred": 11,
+                    "historyStartDay": "2026-03-01",
+                    "dayBucketTimezone": "UTC",
+                    "retentionDays": 3,
+                    "start": "2026-03-15T00:00:00.000Z",
+                    "end": "2026-03-21T09:20:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          }
+        }
+      }
+    },
+    "/api/analysis/trend": {
+      "get": {
+        "tags": ["admin-analytics"],
+        "summary": "读取收件趋势统计",
+        "description": "返回历史聚合后的最近 N 天每日收件数量。管理页当前固定请求 14 天，按 UTC 日补零。",
+        "operationId": "getAnalysisTrend",
+        "x-permission": "read",
+        "x-scope": "admin",
+        "x-order": 20,
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "趋势天数，最大 90。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 14
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回趋势统计",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "trend": {
+                    "days": 14,
+                    "start": "2026-03-08T00:00:00.000Z",
+                    "end": "2026-03-21T09:20:00.000Z",
+                    "dayBucketTimezone": "UTC",
+                    "series": [
+                      {
+                        "day": "2026-03-20",
+                        "total": 6
+                      },
+                      {
+                        "day": "2026-03-21",
+                        "total": 8
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          }
+        }
+      }
+    },
+    "/api/analysis/senders": {
+      "get": {
+        "tags": ["admin-analytics"],
+        "summary": "读取热门发件方统计",
+        "description": "按发件方聚合指定时间窗口内的历史收件量。管理页当前固定请求近 14 天 Top5。Sender 头会按可注册主域名归一化，避免同一发件方因显示名或子域名不同被拆成多个桶。",
+        "operationId": "getAnalysisSenders",
+        "x-permission": "read",
+        "x-scope": "admin",
+        "x-order": 30,
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "返回发件人数上限。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 5
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "description": "统计时间窗口天数，默认 14，最大 90。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 14
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功返回热门发件方列表",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "days": 14,
+                  "start": "2026-03-08T00:00:00.000Z",
+                  "end": "2026-03-21T09:20:00.000Z",
+                  "dayBucketTimezone": "UTC",
+                  "senders": [
+                    {
+                      "sender": "openai.com",
+                      "total": 18
+                    },
+                    {
+                      "sender": "example.com",
+                      "total": 9
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          }
+        }
+      }
+    },
+    "/api/admin/domains": {
+      "get": {
+        "tags": ["admin-domains"],
+        "summary": "读取域名池列表",
+        "description": "返回当前 `managed_domains` 中的所有域名记录，按启用状态和域名字母排序。",
+        "operationId": "listManagedDomains",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 10,
+        "responses": {
+          "200": {
+            "description": "成功返回域名池列表",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "domains": [
+                    {
+                      "zone_id": "zone-primary",
+                      "domain": "example.test",
+                      "zone_status": "active",
+                      "issuable_enabled": 1,
+                      "last_synced_at": "2026-03-21T09:00:00.000Z",
+                      "sync_error": "",
+                      "note": "primary pool"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "线上 D1 尚未执行 `managed_domains` 迁移"
+          }
+        }
+      }
+    },
+    "/api/admin/domains/sync": {
+      "post": {
+        "tags": ["admin-domains"],
+        "summary": "手动同步 Cloudflare Zone 列表",
+        "description": "从 Cloudflare 拉取 Zone 列表并同步到本地域名池。若 Cloudflare 返回空结果且本地已有域名池记录，接口会拒绝覆盖以保护现有数据。",
+        "operationId": "syncManagedDomains",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 20,
+        "responses": {
+          "200": {
+            "description": "同步成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "synced_count": 3,
+                  "synced_at": "2026-03-21T09:00:00.000Z",
+                  "domains": [
+                    {
+                      "zone_id": "zone-primary",
+                      "domain": "example.test",
+                      "zone_status": "active",
+                      "issuable_enabled": 0,
+                      "last_synced_at": "2026-03-21T09:00:00.000Z",
+                      "sync_error": "",
+                      "note": ""
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "409": {
+            "description": "Cloudflare 返回空 Zone 且本地已有记录，已触发保护性拒绝"
+          },
+          "503": {
+            "description": "`managed_domains` 表缺失，或 `CLOUDFLARE_API_TOKEN` 未配置"
+          }
+        }
+      }
+    },
+    "/api/admin/domains/{zone_id}": {
+      "put": {
+        "tags": ["admin-domains"],
+        "summary": "更新单个域名发放策略",
+        "description": "手动启停某个 Zone 的发放状态，也可同步更新备注。",
+        "operationId": "updateManagedDomainPolicy",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 30,
+        "parameters": [
+          {
+            "name": "zone_id",
+            "in": "path",
+            "required": true,
+            "description": "Cloudflare Zone ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "zone-primary"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "目标发放状态和备注。",
+          "content": {
+            "application/json": {
+              "example": {
+                "issuable_enabled": 1,
+                "note": "primary pool"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "domain": {
+                    "zone_id": "zone-primary",
+                    "domain": "example.test",
+                    "zone_status": "active",
+                    "issuable_enabled": 1,
+                    "last_synced_at": "2026-03-21T09:00:00.000Z",
+                    "sync_error": "",
+                    "note": "primary pool"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON，或 `issuable_enabled` 非 0/1"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "zone_id 不存在"
+          },
+          "503": {
+            "description": "`managed_domains` 表缺失"
+          }
+        }
+      }
+    },
+    "/api/admin/domains/batch": {
+      "post": {
+        "tags": ["admin-domains"],
+        "summary": "批量更新域名发放状态",
+        "description": "适合管理页的全选/批量启停操作。`zone_ids` 不能为空，单次最多 200 个。",
+        "operationId": "updateManagedDomainsBatch",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 40,
+        "requestBody": {
+          "required": true,
+          "description": "要更新的一组 zone_id 和目标发放状态。",
+          "content": {
+            "application/json": {
+              "example": {
+                "zone_ids": ["zone-primary", "zone-secondary"],
+                "issuable_enabled": 1
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "批量更新成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "updated": ["zone-primary", "zone-secondary"],
+                  "missing": [],
+                  "updated_count": 2,
+                  "issuable_enabled": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON、缺少 zone_ids、超过上限或 `issuable_enabled` 非 0/1"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "`managed_domains` 表缺失"
+          }
+        }
+      }
+    }
+  }
+}

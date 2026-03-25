@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>私有邮箱控制台 - Private Mail Console</title>
+    <link rel="stylesheet" href="__MANAGE_CSS__" />
+    <!-- Custom Script (Must be loaded before Alpine so alpine:init works) -->
+    <script src="__MANAGE_JS__" defer></script>
+    <script src="__CHART_JS__" defer></script>
+    <script defer src="__ALPINE_JS__"></script>
+</head>
+
+<body x-data="mailApp" x-cloak>
+
+    <!-- Fullscreen Auth Overlay -->
+    <div class="auth-overlay" :class="authOverlayClass">
+        <div class="panel auth-card">
+            <div class="logo">📬</div>
+            <div>
+                <h2>Private Mail Console</h2>
+                <p class="auth-subtitle">基于 Cloudflare Workers 的无服务器邮箱系统</p>
+            </div>
+            <div>
+                <label for="apiKey" class="auth-label">只读密钥 / 管理员密钥 / API Key</label>
+                <input type="password" id="apiKey" :value="authInput" :disabled="authLoading" placeholder="输入 API Key"
+                    autocomplete="off" @input="setAuthInput" @keyup.enter="login" />
+            </div>
+            <p class="auth-note">密钥仅保留在当前页面内存中，刷新或关闭页面后需要重新输入。</p>
+            <button type="button" class="btn btn-primary auth-submit" @click="login" :disabled="authLoading"
+                x-text="authSubmitLabel"></button>
+            <div class="auth-links">
+                <a class="btn btn-secondary btn-link" href="/api-docs" target="_blank" rel="noopener noreferrer">查看 API
+                    文档</a>
+            </div>
+            <div class="auth-error" :class="authErrorClass" x-text="authError"></div>
+        </div>
+    </div>
+
+    <div class="shell" :class="shellClass">
+        <!-- Hero / Header & Tabs -->
+        <header class="hero panel">
+            <nav class="tabs-nav">
+                <div class="tabs-group">
+                    <button class="tab-btn" :class="inboxTabClass" @click="showInboxTab">收件箱</button>
+                    <button class="tab-btn" :class="dashboardTabClass" @click="showDashboardTab">数据看板</button>
+                    <template x-if="canUseAdminActions">
+                        <button class="tab-btn" :class="domainsTabClass" @click="showDomainsTab">域名池管理</button>
+                    </template>
+                </div>
+                <div class="tabs-actions">
+                    <a class="btn btn-secondary btn-link" href="/api-docs" target="_blank" rel="noopener noreferrer">API
+                        文档</a>
+                    <template x-if="canUseAdminActions">
+                        <button class="btn btn-secondary btn-link" type="button" @click="openInternalApiDocs"
+                            :disabled="adminDocsOpening" x-text="internalApiDocsButtonLabel"></button>
+                    </template>
+                    <button class="btn btn-icon" @click="logout" title="退出登录">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                            <polyline points="16 17 21 12 16 7" />
+                            <line x1="21" y1="12" x2="9" y2="12" />
+                        </svg>
+                    </button>
+                </div>
+            </nav>
+        </header>
+
+        <!-- Dashboard Tab -->
+        <section class="panel stats-panel" :class="dashboardPanelClass">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <h2>数据看板 Dashboard</h2>
+                    <span x-text="statsTimeLabel"></span>
+                    <p class="panel-subnote" x-text="statsScopeLabel"></p>
+                </div>
+                <button class="btn btn-icon" @click="fetchStats" title="刷新统计">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                        <path d="M3 3v5h5" />
+                        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                        <path d="M16 16h5v5" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span>累计接收</span>
+                    <strong x-text="stats.totalReceived">0</strong>
+                </div>
+                <div class="stat-card">
+                    <span>当前保留</span>
+                    <strong x-text="stats.currentTotal">0</strong>
+                </div>
+                <div class="stat-card">
+                    <span>今日接收</span>
+                    <strong x-text="stats.todayReceived">0</strong>
+                </div>
+                <div class="stat-card">
+                    <span>近七天接收</span>
+                    <strong x-text="stats.last7DaysReceived">0</strong>
+                </div>
+                <div class="stat-card">
+                    <span>未读邮件</span>
+                    <strong class="stat-value-warn" x-text="stats.unread">0</strong>
+                </div>
+                <div class="stat-card">
+                    <span>星标收藏</span>
+                    <strong class="stat-value-accent" x-text="stats.starred">0</strong>
+                </div>
+            </div>
+
+            <!-- Charts Area -->
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <h3>近 14 天收件趋势</h3>
+                    <div class="chart-body">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <h3>近 14 天热门发件方</h3>
+                    <div class="chart-body">
+                        <canvas id="sendersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel domains-panel" :class="domainsPanelClass">
+            <div class="domains-manager">
+                <div class="domains-manager-header">
+                    <div class="panel-title">
+                        <h3>域名池管理</h3>
+                        <span x-text="managedDomainsSummaryLabel"></span>
+                    </div>
+                    <template x-if="canUseAdminActions">
+                        <div class="domains-manager-actions">
+                            <button class="btn btn-secondary" @click="fetchManagedDomains"
+                                :disabled="domainsLoading">刷新列表</button>
+                            <button class="btn btn-secondary" @click="syncManagedDomains" :disabled="domainsSyncing"
+                                x-text="domainSyncButtonLabel"></button>
+                            <button class="btn btn-primary" @click="generateManagedAddress"
+                                :disabled="addressGenerating || !hasIssuableDomains"
+                                x-text="generateAddressButtonLabel"></button>
+                        </div>
+                    </template>
+                </div>
+
+                <template x-if="canUseAdminActions && generatedAddressAvailable">
+                    <div class="generated-address-card">
+                        <span>最新生成地址</span>
+                        <div class="generated-address-main">
+                            <strong x-text="generatedEmail"></strong>
+                            <button class="btn btn-secondary btn-compact generated-address-copy"
+                                @click="copyGeneratedAddress" x-text="generatedAddressCopyLabel"></button>
+                        </div>
+                        <p x-text="generatedAddressMetaLabel"></p>
+                    </div>
+                </template>
+
+                <template x-if="canUseAdminActions">
+                    <div class="domains-controls">
+                        <div class="domains-controls-search">
+                            <input type="text" :value="domainSearchQuery" placeholder="搜索域名或 Zone ID"
+                                @input="updateDomainSearchQuery" />
+                        </div>
+                        <div class="domains-controls-row">
+                            <button class="btn btn-secondary" :class="domainFilterAllButtonClass"
+                                @click="setDomainIssuableFilter('all')">全部</button>
+                            <button class="btn btn-secondary" :class="domainFilterEnabledButtonClass"
+                                @click="setDomainIssuableFilter('enabled')">已启用发放</button>
+                            <button class="btn btn-secondary" :class="domainFilterDisabledButtonClass"
+                                @click="setDomainIssuableFilter('disabled')">未启用发放</button>
+                            <button class="btn btn-secondary" :class="domainSelectAllButtonClass"
+                                @click="toggleSelectAllVisibleManagedDomains"
+                                x-text="domainSelectAllButtonLabel"></button>
+                        </div>
+                        <div class="batch-actions domains-batch-actions" :class="domainsBatchActionsClass">
+                            <span class="batch-count">已选 <span x-text="selectedManagedDomainsCount"></span></span>
+                            <button class="btn btn-secondary btn-compact" @click="setSelectedManagedDomainsIssuable(1)"
+                                :disabled="domainsBatchUpdating" x-text="batchEnableDomainsLabel"></button>
+                            <button class="btn btn-danger btn-compact" @click="setSelectedManagedDomainsIssuable(0)"
+                                :disabled="domainsBatchUpdating" x-text="batchDisableDomainsLabel"></button>
+                            <button class="btn btn-icon batch-actions-clear"
+                                @click="clearSelectedManagedDomains">取消选取</button>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="showManagedDomainsLocked">
+                    <div class="domains-empty">
+                        <p>当前密钥不支持域名管理，请使用管理员密钥登录。</p>
+                    </div>
+                </template>
+
+                <template x-if="showManagedDomainsEmpty">
+                    <div class="domains-empty">
+                        <p>还没有同步到任何域名，请先手动同步一次 Cloudflare Zone 列表。</p>
+                    </div>
+                </template>
+
+                <template x-if="showManagedDomainsTable">
+                    <div class="domains-table-wrap">
+                        <table class="domains-table">
+                            <thead>
+                                <tr>
+                                    <th class="domains-table-checkbox"></th>
+                                    <th>域名</th>
+                                    <th>Zone 状态</th>
+                                    <th>发放状态</th>
+                                    <th>上次同步</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="domain in filteredManagedDomains" :key="domain.zone_id">
+                                    <tr>
+                                        <td class="domains-table-checkbox">
+                                            <input type="checkbox" class="mail-select-checkbox"
+                                                :checked="domain.is_selected" :data-zone-id="domain.zone_id"
+                                                @change="toggleManagedDomainSelectionByEvent" />
+                                        </td>
+                                        <td>
+                                            <div class="domains-table-domain">
+                                                <strong x-text="domain.domain"></strong>
+                                                <span x-text="domain.zone_id"></span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="chip" :class="domain.zone_status_class"
+                                                x-text="domain.zone_status_label"></span>
+                                        </td>
+                                        <td>
+                                            <span class="chip" :class="domain.issuable_class"
+                                                x-text="domain.issuable_label"></span>
+                                        </td>
+                                        <td x-text="domain.sync_label"></td>
+                                        <td>
+                                            <button class="btn btn-compact" :class="domain.action_class"
+                                                :data-zone-id="domain.zone_id" @click="toggleDomainIssuableByEvent"
+                                                x-text="domain.action_label"></button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
+            </div>
+        </section>
+
+        <!-- Global Error Notice -->
+        <div class="status error" :class="globalErrorClass">
+            <span x-text="globalError"></span>
+            <button class="btn-icon status-dismiss" @click="clearGlobalError">✖</button>
+        </div>
+
+        <!-- Main Workspace (List + Reader) -->
+        <main class="workspace" :class="workspaceClass">
+
+            <!-- Left: Mail List -->
+            <section class="panel list-panel">
+                <div class="panel-header list-header">
+                    <div class="panel-title">
+                        <h2>收件箱</h2>
+                    </div>
+                    <span class="list-count" x-text="mailCountLabel">加载中...</span>
+                </div>
+
+                <div class="list-controls">
+                    <div class="search-bar">
+                        <input type="text" :value="searchAddress" placeholder="API 拉取: 特定收件人 "
+                            @input="updateSearchAddress" @keyup.enter="fetchMails" />
+                        <input type="text" x-ref="filterKeywordInput" :value="filterKeyword"
+                            placeholder="本地过滤: 检索主题、发件人..." @input="updateFilterKeyword" />
+                    </div>
+                    <div class="list-controls-row">
+                        <select :value="sortOrder" @change="updateSortOrder" class="controls-select">
+                            <option value="desc">最新在前</option>
+                            <option value="asc">最早在前</option>
+                        </select>
+                        <button class="btn btn-secondary" @click="toggleUnreadFilter"
+                            :class="unreadFilterButtonClass">仅未读</button>
+                        <button class="btn btn-secondary" @click="toggleStarFilter"
+                            :class="starFilterButtonClass">仅星标</button>
+                        <button class="btn btn-secondary" @click="toggleSelectAllVisible" :class="selectAllButtonClass"
+                            x-text="selectAllButtonLabel"></button>
+                        <button class="btn btn-secondary" @click="fetchMails" :disabled="isRefreshing"
+                            x-text="refreshButtonLabel"></button>
+                        <span class="refresh-hint" :class="refreshHintClass" x-text="refreshHint"></span>
+                    </div>
+
+                    <!-- Batch Actions -->
+                    <div class="batch-actions" :class="batchActionsClass">
+                        <span class="batch-count">已选 <span x-text="selectedCount"></span></span>
+                        <template x-if="canUseAdminActions">
+                            <button class="btn btn-secondary btn-compact" @click="markSelectedAsRead">标记已读</button>
+                        </template>
+                        <button class="btn btn-danger btn-compact" @click="deleteSelected">删除</button>
+                        <button class="btn btn-icon batch-actions-clear" @click="clearSelectedIds">取消选取</button>
+                    </div>
+                </div>
+
+                <div class="email-list">
+                    <template x-if="isFilteredMailsEmpty">
+                        <div class="detail-empty detail-empty-list">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                            </svg>
+                            <p>没有找到邮件</p>
+                        </div>
+                    </template>
+
+                    <template x-for="mail in filteredMails" :key="mail.id">
+                        <div class="email-card" :class="mail.card_class" :data-mail-id="mail.id"
+                            @click="openMailByEvent">
+                            <div class="email-card-checkbox" @click.stop>
+                                <input type="checkbox" :checked="mail.is_selected" :data-mail-id="mail.id"
+                                    @change="toggleMailSelectionByEvent" class="mail-select-checkbox" />
+                            </div>
+                            <div class="email-avatar" :class="mail.avatar_class" x-text="mail.avatar_initial"></div>
+                            <div class="email-content">
+                                <div class="email-header">
+                                    <span class="email-sender" x-text="mail.sender_name"></span>
+                                    <span class="email-time" x-text="mail.received_label"></span>
+                                </div>
+                                <div class="email-subject" x-text="mail.subject_label"></div>
+                                <div class="email-preview" x-text="mail.preview_label"></div>
+                            </div>
+                            <div class="email-actions" @click.stop>
+                                <template x-if="canUseAdminActions">
+                                    <button class="btn btn-icon star-btn" :class="mail.star_button_class"
+                                        :data-mail-id="mail.id" @click="toggleStarByEvent">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" :fill="mail.star_fill"
+                                            stroke="currentColor" stroke-width="2">
+                                            <polygon
+                                                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                                        </svg>
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- Right: Detail Reader -->
+            <section class="panel detail-panel" :class="detailPanelClass">
+                <div class="panel-header">
+                    <div class="panel-title panel-title-row">
+                        <button class="btn btn-icon mobile-back-btn" @click="closeMobileDrawer">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="19" y1="12" x2="5" y2="12" />
+                                <polyline points="12 19 5 12 12 5" />
+                            </svg>
+                        </button>
+                        <h2>阅读器</h2>
+                    </div>
+                    <template x-if="hasDetailActions">
+                        <div class="hero-actions">
+                            <span class="chip" :class="detailChipClass" x-text="detailChipLabel"></span>
+                            <template x-if="showSwitchToLiteButton"><button class="btn btn-secondary"
+                                    @click="switchToLite">查看精简摘要</button></template>
+                            <template x-if="showSwitchToRichButton"><button class="btn btn-secondary"
+                                    @click="switchToRich">查看富解析</button></template>
+                            <template x-if="showLoadRichButton"><button class="btn btn-secondary"
+                                    @click="loadRichDetail">请求富解析</button></template>
+                            <button class="btn btn-danger btn-icon" @click="deleteActiveMail" title="删除当前邮件">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M3 6h18" />
+                                    <path
+                                        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                </svg>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="detail-body">
+                    <template x-if="showDetailEmptyState">
+                        <div class="detail-empty">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                <polyline points="22,6 12,13 2,6" />
+                            </svg>
+                            <p>点击左侧邮件列表进行阅读</p>
+                        </div>
+                    </template>
+
+                    <template x-if="detailLoading">
+                        <div class="detail-empty">
+                            <p>正在加载邮件内容...</p>
+                        </div>
+                    </template>
+
+                    <template x-if="showDetailContent">
+                        <div class="detail-content-stack">
+                            <!-- Envelope Info -->
+                            <div class="mail-header-info">
+                                <h3 class="mail-subject-large" x-text="detailSubjectLabel"></h3>
+                                <div class="mail-meta-grid">
+                                    <div class="meta-row">
+                                        <span class="meta-label">发件人</span>
+                                        <strong class="meta-value" x-text="activeMailDetail.sender"></strong>
+                                    </div>
+                                    <div class="meta-row">
+                                        <span class="meta-label">收件人</span>
+                                        <span class="meta-value" x-text="activeMailDetail.recipient"></span>
+                                    </div>
+                                    <div class="meta-row">
+                                        <span class="meta-label">时间</span>
+                                        <span class="meta-value" x-text="activeMailDetail.received_full_label"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Attachments Cards -->
+                            <template x-if="hasAttachments">
+                                <div class="attachments-bar">
+                                    <h4>附件 (<span x-text="activeMailDetail.attachments.length"></span>)</h4>
+                                    <div class="attachment-chips">
+                                        <template x-for="att in activeMailDetail.attachments">
+                                            <div class="attach-chip" :title="att.content_type">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                    stroke="currentColor" stroke-width="2">
+                                                    <path
+                                                        d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                                                </svg>
+                                                <span x-text="att.filename_label"></span>
+                                                <span class="attach-size" x-text="att.size_label"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Action Links -->
+                            <template x-if="hasActionLinks">
+                                <div class="action-links-bar">
+                                    <strong class="action-links-label">快捷操作点：</strong>
+                                    <template x-for="link in visibleActionLinks">
+                                        <a :href="link.safe_url" target="_blank" rel="noopener noreferrer"
+                                            class="btn btn-primary action-link-btn" x-text="link.label_text"></a>
+                                    </template>
+                                    <template x-if="hasOverflowActionLinks">
+                                        <button type="button" class="btn btn-secondary btn-compact action-links-toggle"
+                                            @click="toggleActionLinksExpand" x-text="toggleActionLinksLabel"></button>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <!-- View Mode Tabs -->
+                            <div class="mail-toolbar">
+                                <div class="mail-toolbar-actions">
+                                    <template x-if="detailHasHtmlBody"><button class="btn btn-secondary"
+                                            :class="htmlRenderModeButtonClass" @click="setRenderModeHtml">HTML
+                                            视图</button></template>
+                                    <button class="btn btn-secondary" :class="textRenderModeButtonClass"
+                                        @click="setRenderModeText">纯文本视图</button>
+                                    <template x-if="detailHasRawSource"><button class="btn btn-secondary"
+                                            :class="sourceRenderModeButtonClass"
+                                            @click="setRenderModeSource">原始代码</button></template>
+                                </div>
+                            </div>
+
+                            <!-- Content Renderer -->
+                            <div class="mail-viewer-container">
+                                <template x-if="showHtmlView">
+                                    <iframe class="mail-iframe" :srcdoc="activeMailDetail.safe_body_html"
+                                        sandbox="allow-popups allow-popups-to-escape-sandbox"></iframe>
+                                </template>
+
+                                <template x-if="showTextView">
+                                    <div class="text-view-content" x-text="bodyTextLabel"></div>
+                                </template>
+
+                                <template x-if="showSourceView">
+                                    <div class="text-view-content text-view-source" x-text="bodySourceLabel"></div>
+                                </template>
+                            </div>
+
+                        </div>
+                    </template>
+                </div>
+            </section>
+        </main>
+    </div>
+
+</body>
+
+</html>

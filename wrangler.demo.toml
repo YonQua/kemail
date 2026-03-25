@@ -1,0 +1,20 @@
+name = "kemail"
+main = "worker.js"
+compatibility_date = "2026-03-09"
+workers_dev = true
+
+# 首次部署前，请复制为本地 wrangler.toml，并替换下面的 Worker 名称、资源 ID 和后续自定义域名配置。
+# 建议把 live wrangler.toml 保留在本机，并继续通过 .gitignore 排除。
+# workers.dev 便于第一次验证；如果你后续绑定了正式域名，建议在本地 wrangler.toml 中改成 false。
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mail_db"
+database_id = "YOUR_D1_DATABASE_ID"

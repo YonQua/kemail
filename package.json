@@ -1,0 +1,33 @@
+{
+  "name": "kemail",
+  "description": "Cloudflare Workers temporary mail API with D1 storage, admin console, and OpenAPI docs.",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "d1",
+    "kv",
+    "email",
+    "openapi"
+  ],
+  "scripts": {
+    "build:manage": "node scripts/build-manage-assets.mjs",
+    "dev": "npm run build:manage && wrangler dev",
+    "deploy": "npm run build:manage && npm run test:worker && wrangler deploy",
+    "tail": "wrangler tail",
+    "test:worker": "node scripts/run-worker-regression.mjs",
+    "verify:predeploy": "npm run build:manage && npm run test:worker && HOME=/tmp XDG_CONFIG_HOME=/tmp wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "mail-parser-wasm-worker": "^0.2.1",
+    "postal-mime": "^2.7.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.71.0"
+  }
+}
