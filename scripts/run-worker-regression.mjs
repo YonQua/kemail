@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 
+import { APP_RELEASE_TAG, APP_VERSION } from '../version.js'
 import worker from '../worker.js'
 import { parseEmail } from '../worker/parser.js'
 
@@ -425,6 +426,16 @@ async function main() {
 
       return originalFetch(input, init)
     }
+
+    const publicVersion = await dispatchJson(env, {
+      path: '/api/version',
+    })
+    assert.equal(publicVersion.status, 200)
+    assert.deepEqual(publicVersion.json, {
+      ok: true,
+      version: APP_VERSION,
+      release_tag: APP_RELEASE_TAG,
+    })
 
     const unauthorized = await dispatchJson(env, {
       path: '/api/emails',

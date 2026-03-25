@@ -1,3 +1,4 @@
+import { APP_RELEASE_TAG, APP_VERSION } from './version.js'
 import { invalidateAnalysisMemoryCache } from './worker/analysis.js'
 import { ensureApiReadAccess, handleApiRequest } from './worker/api-handlers.js'
 import { authenticatedRateLimitPolicy, checkRateLimit, getBearerToken } from './worker/auth.js'
@@ -15,6 +16,7 @@ import {
   isStaticAssetPath,
   isStaticDocumentPath,
   jsonResponse,
+  methodNotAllowed,
   optionsResponse,
 } from './worker/http.js'
 import { incrementReceivedMetrics } from './worker/metrics-store.js'
@@ -101,6 +103,17 @@ export default {
 
     if (isStaticAsset) {
       return handleStaticAssetRequest(request, env)
+    }
+
+    if (path === '/api/version') {
+      if (request.method !== 'GET') {
+        return methodNotAllowed(['GET'])
+      }
+      return jsonResponse({
+        ok: true,
+        version: APP_VERSION,
+        release_tag: APP_RELEASE_TAG,
+      })
     }
 
     if (isApiRequest) {

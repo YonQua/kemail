@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "kemail API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "kemail 的完整接口契约源，包含对外集成接口与后台管理接口。构建阶段会从这份源规格派生公开的 `/openapi.json` / `/api-docs`，以及管理员受保护的内部文档入口。"
   },
   "servers": [
@@ -385,10 +385,55 @@
           "sync_error",
           "note"
         ]
+      },
+      "VersionInfo": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "version": {
+            "type": "string"
+          },
+          "release_tag": {
+            "type": "string"
+          }
+        },
+        "required": ["ok", "version", "release_tag"]
       }
     }
   },
   "paths": {
+    "/api/version": {
+      "get": {
+        "tags": ["external"],
+        "summary": "查看当前线上版本",
+        "description": "公开返回当前部署实例暴露的应用版本号与 release tag，适合排查线上实例到底跑的是哪一版。",
+        "operationId": "getRuntimeVersion",
+        "x-permission": "public",
+        "x-scope": "external",
+        "x-order": 5,
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "成功返回当前线上版本信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionInfo"
+                },
+                "example": {
+                  "ok": true,
+                  "version": "1.1.0",
+                  "release_tag": "v1.1.0"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/addresses/generate": {
       "post": {
         "tags": ["external"],

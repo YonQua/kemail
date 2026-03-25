@@ -1,7 +1,7 @@
 {
   "name": "kemail",
   "description": "Cloudflare Workers temporary mail API with D1 storage, admin console, and OpenAPI docs.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "license": "MIT",
   "type": "module",

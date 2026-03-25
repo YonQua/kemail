@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { APP_RELEASE_TAG } from '../version.js'
 
 const rootDir = process.cwd()
 const sourceDir = path.join(rootDir, 'manage-src')
@@ -724,6 +725,7 @@ function buildManageAssets() {
     ['__MANAGE_JS__', jsAsset.publicPath],
     ['__CHART_JS__', chartAsset.publicPath],
     ['__ALPINE_JS__', alpineAsset.publicPath],
+    ['__APP_RELEASE_TAG__', APP_RELEASE_TAG],
   ].reduce(
     (template, [placeholder, assetPath]) => replacePlaceholder(template, placeholder, assetPath),
     htmlTemplate

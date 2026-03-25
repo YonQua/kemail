@@ -181,6 +181,7 @@ npm run deploy
 
 - 公开 API 文档：`/api-docs`
 - 公开 OpenAPI：`/openapi.json`
+- 公开运行时版本：`/api/version`
 - 管理员内部文档：`/api/admin/docs`
 - 管理员内部 OpenAPI：`/api/admin/openapi`
 
@@ -189,30 +190,10 @@ npm run deploy
 ## 关键行为
 
 - `POST /api/addresses/generate` 是推荐发号入口
+- `GET /api/version` 可公开查看当前线上实例暴露的版本号
 - `READ_API_KEY` 可用于发号、查列表、查详情、查最新邮件、删邮件
 - 星标、标记已读、富解析、原始 MIME 与域名池管理默认需要 `ADMIN_API_KEY`
 - 管理页支持只读密钥登录；只读会话不会暴露管理员入口
 - Workers KV 只承担未鉴权 API 的防刷限流
 - `/api/latest` 当前直接走 D1 查询，性能依赖 `idx_recipient_received_at`
 - 富解析缓存当前为 Worker 进程内短 TTL 小容量缓存，不应视为持久缓存
-
-## 同步到 GitHub 前检查
-
-在准备 `git push` 前，至少执行一次：
-
-```bash
-git status --short --ignored
-npm run build:manage
-npm run test:worker
-```
-
-检查重点：
-
-- staged 文件里不应出现 `wrangler.toml`
-- staged 文件里不应出现 `public/`
-- staged 文件里不应出现 `docs/`
-- staged 文件里不应出现 `test_mail_api.py`
-- staged 文件里不应出现 `.env*`、`.wrangler/`、IDE 配置或本地日志
-- 模板文件中不应出现真实资源 ID、真实密钥或本机绝对路径
-
-如果你只是同步开源仓库，GitHub 上看到的内容应当主要是源码、脚本、模板配置和文档说明，而不是你本地运行态文件。

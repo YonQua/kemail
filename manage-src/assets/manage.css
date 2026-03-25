@@ -218,6 +218,42 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.runtime-version-badge {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-panel-solid) 84%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(10px);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.runtime-version-badge strong {
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.runtime-version-badge a {
+  color: var(--accent-strong);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.runtime-version-badge a:hover {
+  color: var(--accent);
+}
+
 .tabs-actions {
   display: flex;
   align-items: center;
@@ -1301,6 +1337,19 @@ select:focus {
 }
 
 @media (max-width: 640px) {
+  .runtime-version-badge {
+    right: 12px;
+    bottom: 12px;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 11px;
+  }
+
+  .runtime-version-badge strong {
+    font-size: 12px;
+  }
+
   .auth-links .btn-link {
     flex: 1 1 100%;
   }
