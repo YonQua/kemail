@@ -710,6 +710,20 @@
                         ]
                       }
                     },
+                    "result_info": {
+                      "type": "object",
+                      "properties": {
+                        "count": {
+                          "type": "integer",
+                          "description": "当前响应实际返回的邮件条数。"
+                        },
+                        "total_count": {
+                          "type": "integer",
+                          "description": "当前查询条件下的总邮件数，未受 `limit` 截断。"
+                        }
+                      },
+                      "required": ["count", "total_count"]
+                    },
                     "permissions": {
                       "type": "object",
                       "properties": {
@@ -721,10 +735,14 @@
                       "required": ["admin"]
                     }
                   },
-                  "required": ["ok", "emails", "permissions"]
+                  "required": ["ok", "emails", "result_info", "permissions"]
                 },
                 "example": {
                   "ok": true,
+                  "result_info": {
+                    "count": 20,
+                    "total_count": 137
+                  },
                   "permissions": {
                     "admin": false
                   },

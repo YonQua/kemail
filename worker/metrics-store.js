@@ -1,5 +1,5 @@
 import { AUTO_CLEAN_DAYS, DAY_IN_MS } from './constants.js'
-import { normalizeText } from './text.js'
+import { normalizeText } from './text-core.js'
 
 const COMMON_SECOND_LEVEL_DOMAINS = new Set(['ac', 'co', 'com', 'edu', 'gov', 'net', 'org'])
 

@@ -22,7 +22,8 @@ import {
 import { incrementReceivedMetrics } from './worker/metrics-store.js'
 import { decodeRawEmailBytes, parseEmail, readRawEmailBytes } from './worker/parser.js'
 import { handleStaticAssetRequest, handleStaticDocumentRequest } from './worker/static-assets.js'
-import { appendReadableNotice, logError, normalizeAddress } from './worker/text.js'
+import { appendReadableNotice, normalizeAddress } from './worker/text-core.js'
+import { logError } from './worker/text-logging.js'
 
 export default {
   async email(message, env) {

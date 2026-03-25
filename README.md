@@ -24,9 +24,9 @@
 
 - `worker.js`：Cloudflare Worker 入口
 - `worker/`：后端运行时模块
+- `worker/text-core.js` / `worker/text-links.js` / `worker/text-link-*.js` / `worker/text-logging.js`：文本规范化、链接提取、URL 解包、日志脱敏等内部文本子模块
 - `manage-src/`：管理页和文档页源码
 - `scripts/build-manage-assets.mjs`：构建本地 `public/` 静态产物
-- `scripts/run-worker-regression.mjs`：本地 Worker 集成回归
 - [`specs/openapi.json`](./specs/openapi.json)：完整接口契约源
 - [`wrangler.demo.toml`](./wrangler.demo.toml)：Wrangler 配置模板
 
@@ -147,16 +147,14 @@ npx wrangler secret put CLOUDFLARE_API_TOKEN
 ```bash
 npm run dev
 npm run build:manage
-npm run test:worker
 npm run verify:predeploy
 npm run deploy
 ```
 
 - `npm run dev`：本地开发
 - `npm run build:manage`：生成本地 `public/` 静态产物
-- `npm run test:worker`：运行 Worker 集成回归
-- `npm run verify:predeploy`：构建 + 回归 + `wrangler deploy --dry-run`
-- `npm run deploy`：构建 + 回归 + 正式部署
+- `npm run verify:predeploy`：构建 + `wrangler deploy --dry-run`
+- `npm run deploy`：构建 + 正式部署
 
 ## 部署流程
 
@@ -193,9 +191,3 @@ npm run deploy
 - Workers KV 只承担未鉴权 API 的防刷限流
 - `/api/latest` 当前直接走 D1 查询，性能依赖 `idx_recipient_received_at`
 - 富解析缓存当前为 Worker 进程内短 TTL 小容量缓存，不应视为持久缓存
-
-## 版本
-
-- 仓库版本以 `package.json` 为单一来源
-- 线上运行版本可通过 `GET /api/version` 查询
-- GitHub 发布基线使用 tag 标记，例如 `v1.0.0`、`v1.1.0`

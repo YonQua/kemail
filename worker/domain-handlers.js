@@ -11,7 +11,8 @@ import {
   updateManagedDomainsIssuable,
 } from './domain-store.js'
 import { jsonResponse } from './http.js'
-import { logError, normalizeText } from './text.js'
+import { normalizeText } from './text-core.js'
+import { logError } from './text-logging.js'
 
 const MAX_BATCH_DOMAIN_ZONE_IDS = 200
 

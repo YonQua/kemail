@@ -1,4 +1,4 @@
-import { normalizeText } from './text.js'
+import { normalizeText } from './text-core.js'
 
 const MANAGED_DOMAIN_FIELDS =
   'zone_id, domain, zone_status, issuable_enabled, last_synced_at, sync_error, note'

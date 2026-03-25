@@ -550,11 +550,11 @@ select:focus {
 }
 
 .domains-manager {
-  margin: 0 24px 24px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
-  overflow: hidden;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
 .domains-manager-header {
@@ -564,16 +564,24 @@ select:focus {
   gap: 16px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .domains-manager-header h3 {
   font-size: 16px;
 }
 
+.domains-manager-header .panel-title {
+  flex: 0 0 auto;
+  min-width: 168px;
+}
+
 .domains-manager-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
+  justify-content: flex-end;
 }
 
 .generated-address-card {
@@ -582,37 +590,54 @@ select:focus {
   border-radius: var(--radius-md);
   background: var(--accent-soft);
   border: 1px solid rgba(16, 185, 129, 0.2);
+  scroll-margin-top: 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
-.generated-address-card span {
-  font-size: 12px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.generated-address-card strong {
-  font-size: 18px;
-  word-break: break-all;
+.generated-address-card-inline {
+  margin: 0;
+  flex: 1 1 340px;
+  min-width: min(100%, 320px);
+  padding: 10px 12px;
 }
 
 .generated-address-main {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  justify-content: space-between;
 }
 
-.generated-address-main strong {
-  flex: 1 1 auto;
+.generated-address-card-inline .generated-address-main {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
 }
 
-.generated-address-copy {
-  flex: 0 0 auto;
-  white-space: nowrap;
+.generated-address-input {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+}
+
+.generated-address-card-inline .generated-address-input {
+  padding: 9px 12px;
+  font-size: 14px;
+}
+
+.generated-address-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .generated-address-card p {
@@ -627,6 +652,11 @@ select:focus {
   gap: 10px;
 }
 
+.domains-controls-search {
+  flex: 1 1 280px;
+  min-width: 240px;
+}
+
 .domains-controls-search input {
   width: 100%;
 }
@@ -635,6 +665,7 @@ select:focus {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .domains-batch-actions {
@@ -818,8 +849,8 @@ select:focus {
   display: grid;
   grid-template-columns: 18px 38px minmax(0, 1fr) 32px;
   gap: 12px;
-  padding: 16px 12px;
-  min-height: 104px;
+  padding: 12px 12px;
+  min-height: 112px;
   border-radius: var(--radius-md);
   border-bottom: 1px solid var(--border-light);
   background: var(--bg-panel-solid);
@@ -833,7 +864,7 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-top: 12px; /* Align with avatar roughly */
+  padding-top: 8px; /* Align with avatar roughly */
   align-self: start;
 }
 
@@ -941,7 +972,7 @@ select:focus {
   min-height: 72px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   justify-content: flex-start;
   align-self: stretch;
 }
@@ -957,6 +988,7 @@ select:focus {
   min-width: 0;
   font-weight: 600;
   font-size: 14px;
+  line-height: 1.25;
   color: var(--text-main);
   white-space: nowrap;
   overflow: hidden;
@@ -973,6 +1005,7 @@ select:focus {
   display: block;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -986,8 +1019,9 @@ select:focus {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  line-height: 1.4;
-  margin-top: 2px;
+  line-height: 1.35;
+  max-height: calc(1.35em * 2);
+  margin-top: 0;
 }
 .email-actions {
   display: flex;
@@ -1355,7 +1389,7 @@ select:focus {
   }
 
   .domains-manager {
-    margin: 0 16px 16px;
+    margin: 0;
   }
 
   .domains-controls {
@@ -1363,9 +1397,36 @@ select:focus {
     padding-right: 16px;
   }
 
+  .domains-controls-search {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .domains-manager-header {
+    align-items: stretch;
+  }
+
+  .domains-manager-header .panel-title,
+  .domains-manager-actions,
+  .generated-address-card-inline {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .domains-manager-actions {
+    justify-content: flex-start;
+  }
+
   .generated-address-main {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: 1fr;
+  }
+
+  .generated-address-actions {
+    width: 100%;
+  }
+
+  .generated-address-actions .btn {
+    flex: 1 1 auto;
   }
 
   .domains-manager-header,

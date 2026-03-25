@@ -1,5 +1,5 @@
 import { DEFAULT_EMAIL_LIMIT, MAX_EMAIL_LIMIT } from './constants.js'
-import { normalizeText } from './text.js'
+import { normalizeText } from './text-core.js'
 
 export function parseEmailLimit(rawValue) {
   const parsed = parseInt(rawValue || '', 10)
@@ -25,7 +25,7 @@ export function parseDateParam(rawValue) {
   return date.toISOString()
 }
 
-export function buildEmailListQuery(fields, options) {
+function buildEmailListConditions(options) {
   const { address, sender, subject, query, start, end, sinceId, sortOrder, limit } = options
 
   const conditions = []
@@ -67,10 +67,25 @@ export function buildEmailListQuery(fields, options) {
     params.push(sinceId)
   }
 
+  return { conditions, params, sortOrder, limit }
+}
+
+export function buildEmailListQuery(fields, options) {
+  const { conditions, params, sortOrder, limit } = buildEmailListConditions(options)
+
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   const sql = `SELECT ${fields} FROM emails ${whereClause} ORDER BY received_at ${sortOrder} LIMIT ?`
   params.push(limit)
   return { sql, params }
+}
+
+export function buildEmailCountQuery(options) {
+  const { conditions, params } = buildEmailListConditions(options)
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return {
+    sql: `SELECT COUNT(*) as total FROM emails ${whereClause}`,
+    params,
+  }
 }
 
 export function normalizeIdList(value) {

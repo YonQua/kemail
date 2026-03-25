@@ -1,13 +1,11 @@
-import { normalizeText } from './text.js'
+import { normalizeText } from './text-core.js'
 
 const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4'
 const CLOUDFLARE_ZONE_PAGE_SIZE = 50
 
 function extractCloudflareErrorMessage(payload) {
   const errors = Array.isArray(payload?.errors) ? payload.errors : []
-  const parts = errors
-    .map((item) => normalizeText(item?.message || item?.code))
-    .filter(Boolean)
+  const parts = errors.map((item) => normalizeText(item?.message || item?.code)).filter(Boolean)
 
   if (parts.length > 0) {
     return parts.join('; ')

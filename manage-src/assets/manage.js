@@ -29,6 +29,181 @@ function buildApiError(response, data, text) {
   return error
 }
 
+function selectPriorityActionLinks(links) {
+  if (!Array.isArray(links) || links.length === 0) return []
+
+  const deduped = []
+  const seenUrls = new Set()
+  for (const link of links) {
+    const safeUrl = String(link?.safe_url || '')
+    if (!safeUrl || safeUrl === '#' || seenUrls.has(safeUrl)) continue
+    seenUrls.add(safeUrl)
+    deduped.push(link)
+  }
+  if (deduped.length <= ACTION_LINK_KEEP_LIMIT) return deduped
+
+  const scored = deduped
+    .map((link, index) => {
+      const score = Number(link?.score)
+      return {
+        link,
+        index,
+        score: Number.isFinite(score) ? score : 0,
+      }
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+
+  const selected = scored
+    .filter((item) => item.score >= ACTION_LINK_MIN_SCORE)
+    .slice(0, ACTION_LINK_KEEP_LIMIT)
+
+  if (selected.length >= 2) {
+    return selected.map((item) => item.link)
+  }
+
+  return scored.slice(0, ACTION_LINK_KEEP_LIMIT).map((item) => item.link)
+}
+
+function safeLinkUrl(rawUrl, baseApiUrl) {
+  const value = String(rawUrl || '').trim()
+  if (!value) return '#'
+  try {
+    const parsed = new URL(value, baseApiUrl)
+    if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) {
+      return '#'
+    }
+    return parsed.href
+  } catch (_) {
+    return '#'
+  }
+}
+
+function normalizeActionLinkLabel(label, url) {
+  const raw = String(label || '').trim()
+  if (!raw) return url || '打开链接'
+  const compacted = raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+  if (!compacted) return url || '打开链接'
+
+  const candidates = []
+  compacted
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line, lineIndex) => {
+      const sentenceParts = line
+        .split(/[。！？!?；;]/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+      const baseParts = sentenceParts.length ? sentenceParts : [line]
+      baseParts.forEach((part, partIndex) => {
+        candidates.push({ text: part, lineIndex, partIndex, tokenIndex: 0 })
+        if (/[\u3400-\u9fff]/.test(part) && /\s+/.test(part)) {
+          part
+            .split(/\s+/)
+            .map((token) => token.trim())
+            .filter(Boolean)
+            .forEach((token, tokenIndex) => {
+              candidates.push({ text: token, lineIndex, partIndex, tokenIndex: tokenIndex + 1 })
+            })
+        }
+      })
+    })
+
+  let bestText = ''
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const candidate of candidates) {
+    const text = candidate.text.replace(/[：:，,。！？!?;；、]+$/g, '').trim()
+    if (text.length < 2) continue
+    let score = 0
+    if (/https?:\/\//i.test(text) || /@/.test(text)) score -= 6
+    if (!/[\u3400-\u9fffA-Za-z0-9]/.test(text)) score -= 4
+    if (text.length <= 18) score += 4
+    else if (text.length <= 28) score += 2
+    else if (text.length <= 40) score += 1
+    else score -= 2
+
+    const cjkCount = (text.match(/[\u3400-\u9fff]/g) || []).length
+    const cjkRatio = cjkCount / text.length
+    if (cjkRatio > 0.6 && !/\s/.test(text)) score += 2
+    if (cjkRatio > 0.6 && /\s/.test(text)) score -= 1
+    score -= candidate.lineIndex * 0.6
+    score -= candidate.partIndex * 0.2
+    score -= candidate.tokenIndex * 0.1
+
+    if (score > bestScore) {
+      bestScore = score
+      bestText = text
+    }
+  }
+
+  if (!bestText) bestText = compacted.split('\n')[0] || ''
+  if (!bestText) return url || '打开链接'
+  if (bestText.length > 24) return bestText.slice(0, 24).trimEnd() + '…'
+  return bestText
+}
+
+function getSafeHtmlDocument(htmlStr) {
+  const safeBody = String(htmlStr || '')
+  if (!safeBody) return ''
+
+  const sanitizedBody = safeBody
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<script\b[^>]*\/?>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s+(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, ' $1="#"')
+    .replace(/\s+(href|src)\s*=\s*javascript:[^\s>]+/gi, ' $1="#"')
+
+  const normalizedBody = sanitizedBody.replace(/<a\b([^>]*?)>/gi, (_match, rawAttrs) => {
+    let attrs = rawAttrs || ''
+    if (/target\s*=/i.test(attrs)) {
+      attrs = attrs.replace(/target\s*=\s*(['"]?)[^'"\s>]+\1?/i, 'target="_blank"')
+    } else {
+      attrs += ' target="_blank"'
+    }
+    if (/rel\s*=/i.test(attrs)) {
+      const relMatch = attrs.match(/rel\s*=\s*(['"])(.*?)\1/i)
+      if (relMatch) {
+        const tokens = new Set(relMatch[2].split(/\s+/).filter(Boolean))
+        tokens.add('noopener')
+        tokens.add('noreferrer')
+        const relValue = Array.from(tokens).join(' ')
+        attrs = attrs.replace(/rel\s*=\s*(['"])(.*?)\1/i, `rel="${relValue}"`)
+      }
+    } else {
+      attrs += ' rel="noopener noreferrer"'
+    }
+    return `<a${attrs}>`
+  })
+
+  const csp =
+    "default-src 'none'; script-src 'none'; img-src https: data: cid:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src https: data: cid:; frame-src 'none'; child-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<meta charset="utf-8" />',
+    '<meta name="referrer" content="no-referrer" />',
+    `<meta http-equiv="Content-Security-Policy" content="${csp}" />`,
+    '</head>',
+    `<body>${normalizedBody}</body>`,
+    '</html>',
+  ].join('')
+}
+
+function compactBodyTextValue(text) {
+  const raw = String(text || '')
+  const cleaned = raw.trim()
+  return cleaned || '提取纯文本失败...'
+}
+
 function createMailAppState() {
   return {
     // Global App State
@@ -36,7 +211,9 @@ function createMailAppState() {
     authInput: '',
     authError: '',
     authLoading: false,
-    globalError: '',
+    globalNotice: '',
+    globalNoticeTone: 'error',
+    globalNoticeTimer: null,
 
     // Dashboard & layout State
     activeTab: 'inbox', // 'inbox' | 'dashboard' | 'domains'
@@ -86,6 +263,7 @@ function createMailAppState() {
     isRefreshing: false,
     refreshHint: '',
     refreshHintTimer: null,
+    mailServerTotal: 0,
 
     // Reader State
     activeMail: null,
@@ -135,6 +313,7 @@ function createMailAppState() {
       this.authInput = ''
       this.authError = ''
       this.authLoading = false
+      this.clearGlobalNotice()
       this.stats = {
         totalReceived: 0,
         currentTotal: 0,
@@ -343,15 +522,41 @@ function createMailAppState() {
       }
     },
 
-    showError(msg) {
-      this.globalError = msg
-      setTimeout(() => {
-        if (this.globalError === msg) this.globalError = ''
+    setGlobalNotice(message, tone = 'error') {
+      const nextMessage = String(message || '').trim()
+      if (!nextMessage) return
+
+      if (this.globalNoticeTimer) {
+        clearTimeout(this.globalNoticeTimer)
+        this.globalNoticeTimer = null
+      }
+
+      this.globalNotice = nextMessage
+      this.globalNoticeTone = tone === 'success' ? 'success' : 'error'
+      this.globalNoticeTimer = setTimeout(() => {
+        if (this.globalNotice === nextMessage) {
+          this.globalNotice = ''
+          this.globalNoticeTone = 'error'
+        }
+        this.globalNoticeTimer = null
       }, 5000)
     },
 
-    clearGlobalError() {
-      this.globalError = ''
+    showError(message) {
+      this.setGlobalNotice(message, 'error')
+    },
+
+    showSuccess(message) {
+      this.setGlobalNotice(message, 'success')
+    },
+
+    clearGlobalNotice() {
+      this.globalNotice = ''
+      this.globalNoticeTone = 'error'
+      if (this.globalNoticeTimer) {
+        clearTimeout(this.globalNoticeTimer)
+        this.globalNoticeTimer = null
+      }
     },
 
     get authOverlayClass() {
@@ -704,7 +909,7 @@ function createMailAppState() {
         })
         this.adminAccessAvailable = true
         this.setManagedDomains(data.domains || [])
-        this.showError(`域名同步完成，共 ${data.synced_count || 0} 个 Zone`)
+        this.showSuccess(`域名同步完成，共 ${data.synced_count || 0} 个 Zone`)
       } catch (e) {
         if (e.message === 'Admin access required') {
           this.adminAccessAvailable = false
@@ -725,6 +930,18 @@ function createMailAppState() {
       this.domainIssuableFilter = ['all', 'enabled', 'disabled'].includes(nextFilter)
         ? nextFilter
         : 'all'
+    },
+
+    showAllManagedDomains() {
+      this.setDomainIssuableFilter('all')
+    },
+
+    showEnabledManagedDomains() {
+      this.setDomainIssuableFilter('enabled')
+    },
+
+    showDisabledManagedDomains() {
+      this.setDomainIssuableFilter('disabled')
     },
 
     async toggleDomainIssuableByEvent(event) {
@@ -821,7 +1038,7 @@ function createMailAppState() {
         })
         this.clearSelectedManagedDomains()
         await this.fetchManagedDomains()
-        this.showError(
+        this.showSuccess(
           `已${issuableEnabled ? '启用' : '停用'} ${data?.updated_count || 0} 个域名发放状态`
         )
       } catch (e) {
@@ -829,6 +1046,14 @@ function createMailAppState() {
       } finally {
         this.domainsBatchUpdating = false
       }
+    },
+
+    async enableSelectedManagedDomains() {
+      await this.setSelectedManagedDomainsIssuable(1)
+    },
+
+    async disableSelectedManagedDomains() {
+      await this.setSelectedManagedDomainsIssuable(0)
     },
 
     async generateManagedAddress() {
@@ -842,14 +1067,19 @@ function createMailAppState() {
         const data = await this.apiFetch('/api/addresses/generate', {
           method: 'POST',
         })
-        this.generatedEmail = String(data?.email || '')
-        this.generatedDomain = String(data?.domain || '')
+        const generatedEmail = String(data?.email || '').trim()
+        if (!generatedEmail) {
+          throw new Error('服务端未返回完整邮箱地址')
+        }
+        this.generatedEmail = generatedEmail
+        this.generatedDomain = String(data?.domain || generatedEmail.split('@')[1] || '')
         this.generatedIssuedAt = String(data?.issued_at || '')
         this.generatedAddressCopyState = 'idle'
         if (this.generatedAddressCopyTimer) {
           clearTimeout(this.generatedAddressCopyTimer)
           this.generatedAddressCopyTimer = null
         }
+        this.scrollGeneratedAddressCardIntoView()
       } catch (e) {
         this.showError('生成邮箱失败: ' + e.message)
       } finally {
@@ -916,12 +1146,37 @@ function createMailAppState() {
       }
     },
 
+    scrollGeneratedAddressCardIntoView() {
+      this.$nextTick(() => {
+        const card = document.querySelector('.generated-address-card')
+        if (!card) return
+        card.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      })
+    },
+
+    selectTextByEvent(event) {
+      const target = event?.target
+      if (!target || typeof target.select !== 'function') return
+      target.select()
+    },
+
+    async useGeneratedAddressInInbox() {
+      if (!this.generatedEmail) return
+      this.searchAddress = this.generatedEmail
+      this.switchTab('inbox')
+      await this.fetchMails()
+    },
+
     get domainSyncButtonLabel() {
       return this.domainsSyncing ? '同步中...' : '同步 Cloudflare Zone'
     },
 
     get generateAddressButtonLabel() {
       return this.addressGenerating ? '生成中...' : '生成完整邮箱'
+    },
+
+    get generateAddressButtonDisabled() {
+      return this.addressGenerating || !this.hasIssuableDomains
     },
 
     get showManagedDomainsLocked() {
@@ -956,6 +1211,10 @@ function createMailAppState() {
 
     get generatedAddressAvailable() {
       return Boolean(this.generatedEmail)
+    },
+
+    get showGeneratedAddressCard() {
+      return this.canUseAdminActions && this.generatedAddressAvailable
     },
 
     get generatedAddressMetaLabel() {
@@ -1048,6 +1307,7 @@ function createMailAppState() {
         if (typeof data?.permissions?.admin === 'boolean') {
           this.adminAccessAvailable = data.permissions.admin
         }
+        this.mailServerTotal = Number(data?.result_info?.total_count || 0)
         const emails = Array.isArray(data.emails) ? data.emails : []
         this.mails = emails.map((mail) => this.decorateMailSummary(mail))
         this.clearFilterKeyword()
@@ -1119,9 +1379,9 @@ function createMailAppState() {
     get mailCountLabel() {
       const hasFilters = Boolean(this.filterKeyword || this.filterUnread || this.filterStarred)
       if (hasFilters) {
-        return `显示 ${this.filteredMails.length} / ${this.mails.length} 封邮件`
+        return `${this.filteredMails.length} / ${this.mails.length} / ${this.mailServerTotal} 封邮件`
       }
-      return `${this.mails.length} 封邮件`
+      return `${this.mails.length} / ${this.mailServerTotal} 封邮件`
     },
     get hasSelectedIds() {
       return this.selectedIds.length > 0
@@ -1135,8 +1395,12 @@ function createMailAppState() {
     get batchActionsClass() {
       return { 'is-hidden': !this.hasSelectedIds }
     },
-    get globalErrorClass() {
-      return { 'is-hidden': !this.globalError }
+    get globalNoticeClass() {
+      return {
+        'is-hidden': !this.globalNotice,
+        success: this.globalNoticeTone === 'success',
+        error: this.globalNoticeTone !== 'success',
+      }
     },
     isAllVisibleSelected() {
       const visibleIds = this.filteredMails.map((m) => String(m.id))
@@ -1231,11 +1495,11 @@ function createMailAppState() {
       const rawActionLinks = Array.isArray(detail?.action_links)
         ? detail.action_links.map((link) => ({
             ...link,
-            label_text: this.normalizeActionLinkLabel(link?.label, link?.url),
-            safe_url: this.safeLinkUrl(link?.url),
+            label_text: normalizeActionLinkLabel(link?.label, link?.url),
+            safe_url: safeLinkUrl(link?.url, this.baseApiUrl),
           }))
         : []
-      const actionLinks = this.selectPriorityActionLinks(rawActionLinks)
+      const actionLinks = selectPriorityActionLinks(rawActionLinks)
 
       return {
         ...detail,
@@ -1243,46 +1507,11 @@ function createMailAppState() {
         action_links: actionLinks,
         subject_label: detail?.subject || '无主题',
         received_full_label: this.formatDateFull(detail?.received_at),
-        body_text_label: this.compactBodyText(detail?.body_text),
+        body_text_label: compactBodyTextValue(detail?.body_text),
         body_source_label:
           detail?.body_source || '在加载富解析后方可查看原始代码（或通过/source API）。',
-        safe_body_html: this.getSafeHtml(detail?.body_html),
+        safe_body_html: getSafeHtmlDocument(detail?.body_html),
       }
-    },
-
-    selectPriorityActionLinks(links) {
-      if (!Array.isArray(links) || links.length === 0) return []
-
-      const deduped = []
-      const seenUrls = new Set()
-      for (const link of links) {
-        const safeUrl = String(link?.safe_url || '')
-        if (!safeUrl || safeUrl === '#' || seenUrls.has(safeUrl)) continue
-        seenUrls.add(safeUrl)
-        deduped.push(link)
-      }
-      if (deduped.length <= ACTION_LINK_KEEP_LIMIT) return deduped
-
-      const scored = deduped
-        .map((link, index) => {
-          const score = Number(link?.score)
-          return {
-            link,
-            index,
-            score: Number.isFinite(score) ? score : 0,
-          }
-        })
-        .sort((a, b) => b.score - a.score || a.index - b.index)
-
-      const selected = scored
-        .filter((item) => item.score >= ACTION_LINK_MIN_SCORE)
-        .slice(0, ACTION_LINK_KEEP_LIMIT)
-
-      if (selected.length >= 2) {
-        return selected.map((item) => item.link)
-      }
-
-      return scored.slice(0, ACTION_LINK_KEEP_LIMIT).map((item) => item.link)
     },
 
     refreshMailUiState() {
@@ -1610,193 +1839,6 @@ function createMailAppState() {
       )
     },
 
-    safeLinkUrl(rawUrl) {
-      const value = String(rawUrl || '').trim()
-      if (!value) return '#'
-      try {
-        const parsed = new URL(value, this.baseApiUrl)
-        if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) {
-          return '#'
-        }
-        return parsed.href
-      } catch (_) {
-        return '#'
-      }
-    },
-
-    normalizeActionLinkLabel(label, url) {
-      const raw = String(label || '').trim()
-      if (!raw) return url || '打开链接'
-      const compacted = raw
-        .replace(/\r\n/g, '\n')
-        .replace(/\u00a0/g, ' ')
-        .split('\n')
-        .map((line) => line.replace(/[ \t]+/g, ' ').trim())
-        .filter(Boolean)
-        .join('\n')
-      if (!compacted) return url || '打开链接'
-
-      // 通用策略：按结构分段（换行/句读/中日韩文本空格）后做可读性评分，避免硬编码业务短语。
-      const candidates = []
-      compacted
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .forEach((line, lineIndex) => {
-          const sentenceParts = line
-            .split(/[。！？!?；;]/)
-            .map((part) => part.trim())
-            .filter(Boolean)
-          const baseParts = sentenceParts.length ? sentenceParts : [line]
-          baseParts.forEach((part, partIndex) => {
-            candidates.push({ text: part, lineIndex, partIndex, tokenIndex: 0 })
-            if (/[\u3400-\u9fff]/.test(part) && /\s+/.test(part)) {
-              part
-                .split(/\s+/)
-                .map((token) => token.trim())
-                .filter(Boolean)
-                .forEach((token, tokenIndex) => {
-                  candidates.push({ text: token, lineIndex, partIndex, tokenIndex: tokenIndex + 1 })
-                })
-            }
-          })
-        })
-
-      let bestText = ''
-      let bestScore = Number.NEGATIVE_INFINITY
-      for (const candidate of candidates) {
-        const text = candidate.text.replace(/[：:，,。！？!?;；、]+$/g, '').trim()
-        if (text.length < 2) continue
-        let score = 0
-        if (/https?:\/\//i.test(text) || /@/.test(text)) score -= 6
-        if (!/[\u3400-\u9fffA-Za-z0-9]/.test(text)) score -= 4
-        if (text.length <= 18) score += 4
-        else if (text.length <= 28) score += 2
-        else if (text.length <= 40) score += 1
-        else score -= 2
-
-        const cjkCount = (text.match(/[\u3400-\u9fff]/g) || []).length
-        const cjkRatio = cjkCount / text.length
-        if (cjkRatio > 0.6 && !/\s/.test(text)) score += 2
-        if (cjkRatio > 0.6 && /\s/.test(text)) score -= 1
-        score -= candidate.lineIndex * 0.6
-        score -= candidate.partIndex * 0.2
-        score -= candidate.tokenIndex * 0.1
-
-        if (score > bestScore) {
-          bestScore = score
-          bestText = text
-        }
-      }
-
-      if (!bestText) bestText = compacted.split('\n')[0] || ''
-      if (!bestText) return url || '打开链接'
-      if (bestText.length > 24) return bestText.slice(0, 24).trimEnd() + '…'
-      return bestText
-    },
-
-    getSafeHtml(htmlStr) {
-      const safeBody = String(htmlStr || '')
-      if (!safeBody) return ''
-
-      const sanitizedBody = safeBody
-        .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
-        .replace(/<script\b[^>]*\/?>/gi, '')
-        .replace(/\s+on[a-z]+\s*=\s*(['"]).*?\1/gi, '')
-        .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '')
-        .replace(/\s+(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, ' $1="#"')
-        .replace(/\s+(href|src)\s*=\s*javascript:[^\s>]+/gi, ' $1="#"')
-
-      const normalizedBody = sanitizedBody.replace(/<a\b([^>]*?)>/gi, (_match, rawAttrs) => {
-        let attrs = rawAttrs || ''
-        if (/target\s*=/i.test(attrs)) {
-          attrs = attrs.replace(/target\s*=\s*(['"]?)[^'"\s>]+\1?/i, 'target="_blank"')
-        } else {
-          attrs += ' target="_blank"'
-        }
-        if (/rel\s*=/i.test(attrs)) {
-          const relMatch = attrs.match(/rel\s*=\s*(['"])(.*?)\1/i)
-          if (relMatch) {
-            const tokens = new Set(relMatch[2].split(/\s+/).filter(Boolean))
-            tokens.add('noopener')
-            tokens.add('noreferrer')
-            const relValue = Array.from(tokens).join(' ')
-            attrs = attrs.replace(/rel\s*=\s*(['"])(.*?)\1/i, `rel="${relValue}"`)
-          }
-        } else {
-          attrs += ' rel="noopener noreferrer"'
-        }
-        return `<a${attrs}>`
-      })
-
-      const csp =
-        "default-src 'none'; script-src 'none'; img-src https: data: cid:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src https: data: cid:; frame-src 'none'; child-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
-
-      return [
-        '<!DOCTYPE html>',
-        '<html lang="zh-CN">',
-        '<head>',
-        '<meta charset="utf-8" />',
-        '<meta name="referrer" content="no-referrer" />',
-        `<meta http-equiv="Content-Security-Policy" content="${csp}" />`,
-        '</head>',
-        `<body>${normalizedBody}</body>`,
-        '</html>',
-      ].join('')
-    },
-
-    compactBodyText(text) {
-      const raw = String(text || '')
-      if (!raw) return '提取纯文本失败...'
-      const lines = raw.split(/\r?\n/)
-      const kept = []
-      let skippingLinks = false
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!skippingLinks) {
-          if (/^可用链接[:：]/.test(trimmed)) {
-            skippingLinks = true
-            continue
-          }
-          kept.push(line)
-          continue
-        }
-        if (/^- /.test(trimmed) || trimmed === '') {
-          continue
-        }
-        skippingLinks = false
-        kept.push(line)
-      }
-      const cleaned = kept
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
-      if (!cleaned) return '提取纯文本失败...'
-      const normalized = cleaned.replace(
-        /(^|[\s(（<:：])((?:www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>()]*)?)/gim,
-        (match, prefix, token) => {
-          const value = String(token || '').trim()
-          if (!value || value.includes('@') || /^https?:\/\//i.test(value)) return match
-          const trimmed = value.replace(/[),.;!?，。！？；：]+$/g, '')
-          const suffix = value.slice(trimmed.length)
-          if (!trimmed) return match
-          return `${prefix}https://${trimmed}${suffix}`
-        }
-      )
-      return normalized.replace(/\bhttps?:\/\/[^\s]+/gi, (url) => {
-        if (url.length <= 80) return url
-        try {
-          const parsed = new URL(url)
-          const host = parsed.host
-          const path = parsed.pathname.replace(/\/{2,}/g, '/')
-          const shortPath = path.length > 24 ? `${path.slice(0, 24)}…` : path
-          return `${host}${shortPath}`
-        } catch (_) {
-          return `${url.slice(0, 40)}…`
-        }
-      })
-    },
-
     // --- Batch actions --- //
 
     async toggleStarByEvent(event) {
@@ -1860,7 +1902,7 @@ function createMailAppState() {
         this.clearActiveMailState()
         this.refreshMailUiState()
         await this.refreshStatsAfterMutation()
-        this.showError('邮件已删除')
+        this.showSuccess('邮件已删除')
       } catch (e) {
         this.showError('删除失败')
       }
@@ -1892,9 +1934,9 @@ function createMailAppState() {
         await this.refreshStatsAfterMutation()
         const missing = Array.isArray(result.missing) ? result.missing : []
         if (missing.length > 0) {
-          this.showError(`已删除 ${deletedIds.size} 封，${missing.length} 封已不存在`)
+          this.showSuccess(`已删除 ${deletedIds.size} 封，${missing.length} 封已不存在`)
         } else {
-          this.showError(`已删除 ${deletedIds.size} 封邮件`)
+          this.showSuccess(`已删除 ${deletedIds.size} 封邮件`)
         }
       } catch (e) {
         this.showError('部分删除失败，请重试')

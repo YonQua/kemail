@@ -1,17 +1,27 @@
 import PostalMime from 'postal-mime'
 import { normalizeAttachments } from './email-store.js'
-import {
-  appendActionLinks,
-  compactDisplayText,
-  extractActionLinks,
-  extractActionLinksFromText,
-  logError,
-  normalizeHeaders,
-  normalizeText,
-  stripHtml,
-} from './text.js'
+import { compactDisplayText, normalizeHeaders, normalizeText, stripHtml } from './text-core.js'
+import { extractActionLinks, extractActionLinksFromText } from './text-links.js'
+import { logError } from './text-logging.js'
 
 let wasmMailParserModulePromise = null
+
+function hasExplicitPlainTextPart(rawSource) {
+  return /content-type:\s*text\/plain\b/i.test(String(rawSource || ''))
+}
+
+// HTML-only 邮件直接按 HTML 结构导出纯文本，避免继续信任 parser 产出的劣化 text。
+// 只有原始 MIME 明确提供 text/plain part 时，才把 parser text 视为首选正文。
+function selectPreferredBodyText(bodyText, bodyHtml, rawSource) {
+  const parserText = compactDisplayText(bodyText)
+  const htmlText = compactDisplayText(stripHtml(normalizeText(bodyHtml)))
+
+  if (hasExplicitPlainTextPart(rawSource)) {
+    return parserText || htmlText
+  }
+
+  return htmlText || parserText
+}
 
 function concatUint8Arrays(chunks, totalLength) {
   const merged = new Uint8Array(totalLength)
@@ -78,9 +88,9 @@ export function decodeRawEmailBytes(bytes) {
 function hasMeaningfulParsedContent(parsedEmail) {
   return Boolean(
     normalizeText(parsedEmail.sender) ||
-      normalizeText(parsedEmail.subject) ||
-      normalizeText(parsedEmail.bodyText) ||
-      normalizeText(parsedEmail.bodyHtml)
+    normalizeText(parsedEmail.subject) ||
+    normalizeText(parsedEmail.bodyText) ||
+    normalizeText(parsedEmail.bodyHtml)
   )
 }
 
@@ -99,6 +109,7 @@ function buildParsedEmailResult({
   subject,
   bodyText,
   bodyHtml,
+  rawSource,
   headers,
   attachments,
   parser,
@@ -107,8 +118,8 @@ function buildParsedEmailResult({
 }) {
   const resolvedSender = normalizeText(sender) || fallbackSender || 'Unknown'
   const resolvedSubject = normalizeText(subject) || fallbackSubject || 'No Subject'
-  const normalizedText = compactDisplayText(bodyText)
   const normalizedHtml = normalizeText(bodyHtml)
+  const normalizedText = selectPreferredBodyText(bodyText, normalizedHtml, rawSource)
 
   let actionLinks = extractActionLinks(normalizedHtml)
   if (actionLinks.length === 0) {
@@ -122,7 +133,7 @@ function buildParsedEmailResult({
     subject: resolvedSubject,
     bodyText: normalizedText,
     bodyHtml: normalizedHtml,
-    bodyReadable: appendActionLinks(readableText, actionLinks),
+    bodyReadable: readableText,
     headers: normalizeHeaders(headers),
     attachments: normalizeAttachments(attachments),
     actionLinks,
@@ -142,6 +153,7 @@ export async function parseEmail(raw, fallbackSender, fallbackSubject) {
       subject: parsed?.subject,
       bodyText: parsed?.text,
       bodyHtml: parsed?.body_html,
+      rawSource: source,
       headers: parsed?.headers,
       attachments: parsed?.attachments,
       parser: 'wasm',
@@ -171,6 +183,7 @@ export async function parseEmail(raw, fallbackSender, fallbackSubject) {
       subject: parsed.subject,
       bodyText: parsed.text,
       bodyHtml: parsed.html,
+      rawSource: source,
       headers: parsed.headers,
       attachments: parsed.attachments,
       parser: 'postal-mime',
@@ -186,6 +199,7 @@ export async function parseEmail(raw, fallbackSender, fallbackSubject) {
     subject: fallbackSubject,
     bodyText: '',
     bodyHtml: '',
+    rawSource: source,
     headers: [],
     attachments: [],
     parser: 'fallback',

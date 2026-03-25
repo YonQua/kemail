@@ -139,53 +139,52 @@
                         <h3>域名池管理</h3>
                         <span x-text="managedDomainsSummaryLabel"></span>
                     </div>
+                    <div class="generated-address-card generated-address-card-inline" x-show="showGeneratedAddressCard">
+                        <div class="generated-address-main">
+                            <input type="text" class="generated-address-input" :value="generatedEmail" readonly
+                                @focus="selectTextByEvent" @click="selectTextByEvent" />
+                            <div class="generated-address-actions">
+                                <button class="btn btn-secondary btn-compact generated-address-copy"
+                                    @click="copyGeneratedAddress" x-text="generatedAddressCopyLabel"></button>
+                                <button class="btn btn-primary btn-compact"
+                                    @click="useGeneratedAddressInInbox">带入收件箱</button>
+                            </div>
+                        </div>
+                    </div>
                     <template x-if="canUseAdminActions">
                         <div class="domains-manager-actions">
+                            <button class="btn btn-primary" @click="generateManagedAddress"
+                                :disabled="generateAddressButtonDisabled" x-text="generateAddressButtonLabel"></button>
                             <button class="btn btn-secondary" @click="fetchManagedDomains"
                                 :disabled="domainsLoading">刷新列表</button>
                             <button class="btn btn-secondary" @click="syncManagedDomains" :disabled="domainsSyncing"
                                 x-text="domainSyncButtonLabel"></button>
-                            <button class="btn btn-primary" @click="generateManagedAddress"
-                                :disabled="addressGenerating || !hasIssuableDomains"
-                                x-text="generateAddressButtonLabel"></button>
                         </div>
                     </template>
                 </div>
 
-                <template x-if="canUseAdminActions && generatedAddressAvailable">
-                    <div class="generated-address-card">
-                        <span>最新生成地址</span>
-                        <div class="generated-address-main">
-                            <strong x-text="generatedEmail"></strong>
-                            <button class="btn btn-secondary btn-compact generated-address-copy"
-                                @click="copyGeneratedAddress" x-text="generatedAddressCopyLabel"></button>
-                        </div>
-                        <p x-text="generatedAddressMetaLabel"></p>
-                    </div>
-                </template>
-
                 <template x-if="canUseAdminActions">
                     <div class="domains-controls">
-                        <div class="domains-controls-search">
-                            <input type="text" :value="domainSearchQuery" placeholder="搜索域名或 Zone ID"
-                                @input="updateDomainSearchQuery" />
-                        </div>
                         <div class="domains-controls-row">
                             <button class="btn btn-secondary" :class="domainFilterAllButtonClass"
-                                @click="setDomainIssuableFilter('all')">全部</button>
+                                @click="showAllManagedDomains">全部</button>
                             <button class="btn btn-secondary" :class="domainFilterEnabledButtonClass"
-                                @click="setDomainIssuableFilter('enabled')">已启用发放</button>
+                                @click="showEnabledManagedDomains">已启用发放</button>
                             <button class="btn btn-secondary" :class="domainFilterDisabledButtonClass"
-                                @click="setDomainIssuableFilter('disabled')">未启用发放</button>
+                                @click="showDisabledManagedDomains">未启用发放</button>
                             <button class="btn btn-secondary" :class="domainSelectAllButtonClass"
                                 @click="toggleSelectAllVisibleManagedDomains"
                                 x-text="domainSelectAllButtonLabel"></button>
+                            <div class="domains-controls-search">
+                                <input type="text" :value="domainSearchQuery" placeholder="搜索域名或 Zone ID"
+                                    @input="updateDomainSearchQuery" />
+                            </div>
                         </div>
                         <div class="batch-actions domains-batch-actions" :class="domainsBatchActionsClass">
                             <span class="batch-count">已选 <span x-text="selectedManagedDomainsCount"></span></span>
-                            <button class="btn btn-secondary btn-compact" @click="setSelectedManagedDomainsIssuable(1)"
+                            <button class="btn btn-secondary btn-compact" @click="enableSelectedManagedDomains"
                                 :disabled="domainsBatchUpdating" x-text="batchEnableDomainsLabel"></button>
-                            <button class="btn btn-danger btn-compact" @click="setSelectedManagedDomainsIssuable(0)"
+                            <button class="btn btn-danger btn-compact" @click="disableSelectedManagedDomains"
                                 :disabled="domainsBatchUpdating" x-text="batchDisableDomainsLabel"></button>
                             <button class="btn btn-icon batch-actions-clear"
                                 @click="clearSelectedManagedDomains">取消选取</button>
@@ -256,9 +255,9 @@
         </section>
 
         <!-- Global Error Notice -->
-        <div class="status error" :class="globalErrorClass">
-            <span x-text="globalError"></span>
-            <button class="btn-icon status-dismiss" @click="clearGlobalError">✖</button>
+        <div class="status" :class="globalNoticeClass">
+            <span x-text="globalNotice"></span>
+            <button class="btn-icon status-dismiss" @click="clearGlobalNotice">✖</button>
         </div>
 
         <!-- Main Workspace (List + Reader) -->

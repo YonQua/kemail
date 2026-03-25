@@ -10,14 +10,13 @@ import {
 } from './constants.js'
 import {
   compactDisplayText,
-  extractActionLinksFromRawSource,
-  extractActionLinksFromText,
   normalizeAddress,
   normalizeHeaders,
   normalizeText,
   sanitizeEmailHtml,
   truncateText,
-} from './text.js'
+} from './text-core.js'
+import { extractActionLinksFromRawSource, extractActionLinksFromText } from './text-links.js'
 
 const richDetailMemoryCaches = new WeakMap()
 const fallbackRichDetailMemoryCache = new Map()
@@ -158,6 +157,20 @@ function applyRichDetail(baseDetail, richDetail) {
     parser: normalizeText(richDetail.parser) || 'rich-cache',
     parser_version: normalizeText(richDetail.parser_version) || PARSER_VERSION,
     rich_enabled: true,
+  }
+}
+
+function applyParsedTextDetail(baseDetail, parsedDetail) {
+  return {
+    ...baseDetail,
+    sender: normalizeText(parsedDetail.sender) || baseDetail.sender,
+    subject: normalizeText(parsedDetail.subject) || baseDetail.subject,
+    body_text: compactDisplayText(parsedDetail.body_text || baseDetail.body_text),
+    action_links: Array.isArray(parsedDetail.action_links)
+      ? parsedDetail.action_links
+      : baseDetail.action_links,
+    parser: normalizeText(parsedDetail.parser) || baseDetail.parser,
+    parser_version: normalizeText(parsedDetail.parser_version) || PARSER_VERSION,
   }
 }
 
@@ -327,21 +340,27 @@ export async function buildEmailDetail(env, row, options = {}) {
     richEnabled: false,
   })
 
-  if (!rawSource || !rich || !richAvailable) {
+  if (!rawSource || !richAvailable) {
     return baseDetail
   }
 
   const cachedRich = await readRichDetailCache(env, row.id)
   if (cachedRich) {
+    if (!rich) {
+      return applyParsedTextDetail(baseDetail, cachedRich)
+    }
     return applyRichDetail(baseDetail, cachedRich)
   }
 
   if (typeof parseEmailFn !== 'function') {
+    if (!rich) {
+      return baseDetail
+    }
     throw new Error('parseEmailFn is required when rich detail is requested')
   }
 
   const parsed = await parseEmailFn(rawSource, row.sender, row.subject)
-  const richDetail = applyRichDetail(baseDetail, {
+  const parsedDetail = {
     sender: parsed.sender || normalizeText(row.sender) || 'Unknown',
     subject: parsed.subject || normalizeText(row.subject) || 'No Subject',
     body_text: parsed.bodyText || readableText,
@@ -351,9 +370,14 @@ export async function buildEmailDetail(env, row, options = {}) {
     action_links: parsed.actionLinks || [],
     parser: parsed.parser,
     parser_version: PARSER_VERSION,
-  })
-  await writeRichDetailCache(env, row.id, richDetail)
-  return richDetail
+  }
+  await writeRichDetailCache(env, row.id, parsedDetail)
+
+  if (!rich) {
+    return applyParsedTextDetail(baseDetail, parsedDetail)
+  }
+
+  return applyRichDetail(baseDetail, parsedDetail)
 }
 
 function getAttachmentSize(content) {

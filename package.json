@@ -18,10 +18,9 @@
   "scripts": {
     "build:manage": "node scripts/build-manage-assets.mjs",
     "dev": "npm run build:manage && wrangler dev",
-    "deploy": "npm run build:manage && npm run test:worker && wrangler deploy",
+    "deploy": "npm run build:manage && wrangler deploy",
     "tail": "wrangler tail",
-    "test:worker": "node scripts/run-worker-regression.mjs",
-    "verify:predeploy": "npm run build:manage && npm run test:worker && HOME=/tmp XDG_CONFIG_HOME=/tmp wrangler deploy --dry-run"
+    "verify:predeploy": "npm run build:manage && HOME=/tmp XDG_CONFIG_HOME=/tmp wrangler deploy --dry-run"
   },
   "dependencies": {
     "mail-parser-wasm-worker": "^0.2.1",

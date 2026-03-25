@@ -33,6 +33,7 @@ import {
 import { jsonResponse, methodNotAllowed } from './http.js'
 import { parseEmail } from './parser.js'
 import {
+  buildEmailCountQuery,
   buildEmailListQuery,
   normalizeIdList,
   parseDateParam,
@@ -40,7 +41,8 @@ import {
   parseSinceId,
   parseSortOrder,
 } from './query.js'
-import { logError, normalizeAddress, normalizeText } from './text.js'
+import { normalizeAddress, normalizeText } from './text-core.js'
+import { logError } from './text-logging.js'
 
 export function ensureApiReadAccess(request, env) {
   if (!hasReadAccess(request, env)) {
@@ -133,14 +135,34 @@ async function handleEmailListRequest(request, env, url, path) {
       sortOrder,
       limit,
     })
-    const out = await env.DB.prepare(sql)
-      .bind(...params)
-      .all()
+    const { sql: countSql, params: countParams } = buildEmailCountQuery({
+      address,
+      sender,
+      subject,
+      query,
+      start,
+      end,
+      sinceId,
+      sortOrder,
+      limit,
+    })
+    const [out, totalRow] = await Promise.all([
+      env.DB.prepare(sql)
+        .bind(...params)
+        .all(),
+      env.DB.prepare(countSql)
+        .bind(...countParams)
+        .first(),
+    ])
     const rows = out.results || []
     const results = rows.map(formatter).filter(Boolean)
     return jsonResponse({
       ok: true,
       emails: results,
+      result_info: {
+        count: results.length,
+        total_count: Number(totalRow?.total || 0),
+      },
       permissions: {
         admin: hasAdminAccess(request, env),
       },

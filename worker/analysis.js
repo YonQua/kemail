@@ -8,7 +8,7 @@ import {
   readHistoricalTrend,
 } from './metrics-store.js'
 import { parseEmailLimit } from './query.js'
-import { logError } from './text.js'
+import { logError } from './text-logging.js'
 
 const analysisResponseCache = new Map()
 
