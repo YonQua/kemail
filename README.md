@@ -1,43 +1,26 @@
 # kemail
 
-一个基于 Cloudflare Workers + D1 + KV 的临时邮箱 API 项目，包含：
-
-- 入站邮件接收与存储
-- 邮件查询、详情、原始 MIME 和富解析
-- 管理后台与数据看板
-- 域名池同步、启停和发号
-- 公开 OpenAPI / API 文档页
+`kemail` 是一个基于 Cloudflare Workers + D1 + KV 的临时邮箱 API，提供收信存储、邮件查询、管理后台、域名池管理，以及公开 OpenAPI / API 文档页。
 
 仓库采用 [MIT](./LICENSE) 许可证。
 
-## 公开仓库边界
+## 功能特性
 
-GitHub 仓库默认只保留这些适合公开分享的内容：
+- 入站邮件接收与结构化存储
+- 邮件列表、详情、原始 MIME 与富解析能力
+- 管理后台与数据看板
+- 域名池同步、启停和发号
+- 公开 API 文档、OpenAPI 契约和运行时版本入口
 
-- `worker.js` 与 `worker/`
-- `manage-src/`
-- `scripts/`
-- `specs/openapi.json`
-- `package.json` / `package-lock.json`
-- `README.md` / `LICENSE`
-- [`wrangler.demo.toml`](./wrangler.demo.toml)
+## 技术栈
 
-这些内容只保留在本地，不进入 GitHub：
+- Cloudflare Workers
+- Cloudflare D1
+- Cloudflare KV
+- 原生 ESM JavaScript
+- `mail-parser-wasm-worker` + `postal-mime`
 
-- `wrangler.toml`
-- `CHANGELOG.md`
-- `public/`
-- `docs/`
-- `test_mail_api.py`
-- `task_plan.md` / `findings.md` / `progress.md`
-- `.wrangler/`、`.env*`、IDE 配置、日志和其他本地开发残留
-
-换句话说，这个仓库的定位是：
-
-- GitHub：源码、构建脚本、契约源、模板配置、部署说明
-- 本地工作区：live 配置、生成产物、私人文档、调试脚本、过程记录
-
-## 仓库结构
+## 项目结构
 
 - `worker.js`：Cloudflare Worker 入口
 - `worker/`：后端运行时模块
@@ -45,7 +28,19 @@ GitHub 仓库默认只保留这些适合公开分享的内容：
 - `scripts/build-manage-assets.mjs`：构建本地 `public/` 静态产物
 - `scripts/run-worker-regression.mjs`：本地 Worker 集成回归
 - [`specs/openapi.json`](./specs/openapi.json)：完整接口契约源
-- [`wrangler.demo.toml`](./wrangler.demo.toml)：公开模板配置
+- [`wrangler.demo.toml`](./wrangler.demo.toml)：Wrangler 配置模板
+
+说明：
+
+- `public/` 是构建产物目录，使用 `npm run build:manage` 本地生成
+- `wrangler.toml` 请基于 [`wrangler.demo.toml`](./wrangler.demo.toml) 在本地创建
+
+## 环境要求
+
+- Node.js 20+
+- npm
+- Wrangler CLI
+- 一个已接入 Cloudflare 的域名
 
 ## 快速开始
 
@@ -55,18 +50,18 @@ GitHub 仓库默认只保留这些适合公开分享的内容：
 npm ci
 ```
 
-### 2. 准备本地 Wrangler 配置
+### 2. 准备 Wrangler 配置
 
 ```bash
 cp wrangler.demo.toml wrangler.toml
 ```
 
-然后只在你本地的 `wrangler.toml` 中替换这些值：
+然后在本地 `wrangler.toml` 中替换以下配置：
 
 - Worker 名称
 - D1 数据库 ID
-- KV namespace ID
-- 自定义域名或 route 配置
+- KV Namespace ID
+- 自定义域名或 Route 配置
 
 推荐绑定名称：
 
@@ -76,7 +71,7 @@ cp wrangler.demo.toml wrangler.toml
 
 ### 3. 初始化 D1
 
-全新安装可直接执行下面这组建表 SQL：
+全新安装可执行以下 SQL：
 
 ```sql
 CREATE TABLE emails (
@@ -124,14 +119,14 @@ CREATE TABLE mail_sender_daily_metrics (
 );
 ```
 
-如果是旧库升级，至少补跑一次：
+如果是旧库升级，至少补跑：
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_recipient_received_at
 ON emails (recipient, received_at DESC);
 ```
 
-### 4. 配置 secrets
+### 4. 配置 Secrets
 
 ```bash
 npx wrangler secret put READ_API_KEY
@@ -139,24 +134,23 @@ npx wrangler secret put ADMIN_API_KEY
 npx wrangler secret put CLOUDFLARE_API_TOKEN
 ```
 
-说明：
+变量说明：
 
 - `READ_API_KEY`：对外查询与常规读写流程
 - `ADMIN_API_KEY`：后台管理能力
-- `CLOUDFLARE_API_TOKEN`：域名池同步用的 Cloudflare Token
+- `CLOUDFLARE_API_TOKEN`：域名池同步使用的 Cloudflare Token
 
-如果暂时不用域名池同步，可以先不配置 `CLOUDFLARE_API_TOKEN`。
+如果暂时不用域名池同步，可以不配置 `CLOUDFLARE_API_TOKEN`。
 
-### 5. 本地验证与部署
+## 常用命令
 
 ```bash
+npm run dev
 npm run build:manage
 npm run test:worker
 npm run verify:predeploy
 npm run deploy
 ```
-
-脚本说明：
 
 - `npm run dev`：本地开发
 - `npm run build:manage`：生成本地 `public/` 静态产物
@@ -164,18 +158,17 @@ npm run deploy
 - `npm run verify:predeploy`：构建 + 回归 + `wrangler deploy --dry-run`
 - `npm run deploy`：构建 + 回归 + 正式部署
 
-## Cloudflare 部署主线
+## 部署流程
 
-建议按这个顺序操作：
+建议按以下顺序部署：
 
-1. 复制 [`wrangler.demo.toml`](./wrangler.demo.toml) 到本地 `wrangler.toml`
-2. 填入你自己的 Worker 名称、D1 / KV 资源 ID
-3. 执行上面的 D1 建表 SQL
-4. 配置 `READ_API_KEY`、`ADMIN_API_KEY`、`CLOUDFLARE_API_TOKEN`
-5. 运行 `npm run verify:predeploy`
-6. 运行 `npm run deploy`
-7. 在 Cloudflare Email Routing 中把 catch-all 或目标地址转发到这个 Worker
-8. 如需正式对外使用，再绑定自定义域名，并在本地 `wrangler.toml` 里关闭 `workers_dev`
+1. 在本地创建并填写 `wrangler.toml`
+2. 执行 D1 建表 SQL
+3. 配置 `READ_API_KEY`、`ADMIN_API_KEY`、`CLOUDFLARE_API_TOKEN`
+4. 运行 `npm run verify:predeploy`
+5. 运行 `npm run deploy`
+6. 在 Cloudflare Email Routing 中将目标地址或 catch-all 转发到该 Worker
+7. 如需正式对外使用，再绑定自定义域名
 
 ## 文档与接口入口
 
@@ -185,15 +178,24 @@ npm run deploy
 - 管理员内部文档：`/api/admin/docs`
 - 管理员内部 OpenAPI：`/api/admin/openapi`
 
-更完整的请求/响应结构，以 [`specs/openapi.json`](./specs/openapi.json) 和运行中的文档页为准。
+更完整的请求与响应结构以 [`specs/openapi.json`](./specs/openapi.json) 和运行中的文档页为准。
 
-## 关键行为
+## 权限说明
+
+- `READ_API_KEY` 可用于发号、查列表、查详情、查最新邮件、删邮件
+- `ADMIN_API_KEY` 额外拥有星标、标记已读、富解析、原始 MIME 与域名池管理能力
+- 管理页支持只读密钥登录；只读会话不会展示管理员入口
+
+## 运行时行为
 
 - `POST /api/addresses/generate` 是推荐发号入口
 - `GET /api/version` 可公开查看当前线上实例暴露的版本号
-- `READ_API_KEY` 可用于发号、查列表、查详情、查最新邮件、删邮件
-- 星标、标记已读、富解析、原始 MIME 与域名池管理默认需要 `ADMIN_API_KEY`
-- 管理页支持只读密钥登录；只读会话不会暴露管理员入口
 - Workers KV 只承担未鉴权 API 的防刷限流
 - `/api/latest` 当前直接走 D1 查询，性能依赖 `idx_recipient_received_at`
 - 富解析缓存当前为 Worker 进程内短 TTL 小容量缓存，不应视为持久缓存
+
+## 版本
+
+- 仓库版本以 `package.json` 为单一来源
+- 线上运行版本可通过 `GET /api/version` 查询
+- GitHub 发布基线使用 tag 标记，例如 `v1.0.0`、`v1.1.0`
