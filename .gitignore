@@ -4,6 +4,7 @@ node_modules/
 .vscode/
 .idea/
 .pytest_cache/
+.codex/
 .venv/
 venv/
 *.log
