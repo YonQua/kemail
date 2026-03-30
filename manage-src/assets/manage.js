@@ -216,8 +216,7 @@ function createMailAppState() {
     globalNoticeTimer: null,
 
     // Dashboard & layout State
-    activeTab: 'inbox', // 'inbox' | 'dashboard' | 'domains'
-    showDashboard: false,
+    activeTab: 'inbox', // 'inbox' | 'dashboard' | 'domains' | 'docs'
     isMobileDrawerOpen: false,
 
     // Data State
@@ -234,7 +233,6 @@ function createMailAppState() {
       dayBucketTimezone: 'UTC',
     },
     adminAccessAvailable: false,
-    adminDocsOpening: false,
     managedDomains: [],
     domainsLoading: false,
     domainsSyncing: false,
@@ -252,6 +250,15 @@ function createMailAppState() {
     statsNeedsRefresh: false,
     statsLastLoadedAt: 0,
     statsMigrationRequired: false,
+    docsMode: 'public',
+    docsLoading: false,
+    docsError: '',
+    docsSpecs: {
+      public: null,
+      admin: null,
+    },
+    docsRenderedMode: '',
+    docsRequestToken: 0,
 
     // List Query State
     searchAddress: '',
@@ -332,7 +339,6 @@ function createMailAppState() {
       this.mails = []
       this.managedDomains = []
       this.adminAccessAvailable = false
-      this.adminDocsOpening = false
       this.domainsLoading = false
       this.domainsSyncing = false
       this.generatedEmail = ''
@@ -348,8 +354,17 @@ function createMailAppState() {
       this.domainIssuableFilter = 'all'
       this.selectedDomainZoneIds = []
       this.domainsBatchUpdating = false
+      this.docsMode = 'public'
+      this.docsLoading = false
+      this.docsError = ''
+      this.docsSpecs = { public: null, admin: null }
+      this.docsRenderedMode = ''
+      this.docsRequestToken += 1
+      this.activeTab = 'inbox'
       this.activeMail = null
       this.activeMailDetail = null
+      const docsRoot = this.$refs?.docsRoot
+      if (docsRoot) docsRoot.innerHTML = ''
     },
 
     setAuthInput(event) {
@@ -408,118 +423,71 @@ function createMailAppState() {
       }
     },
 
-    async fetchAuthorizedAsset(path, accept = 'text/plain, */*') {
-      const headers = {
-        Authorization: `Bearer ${this.authInput}`,
-        Accept: accept,
-      }
-
-      try {
-        const response = await fetch(`${this.baseApiUrl}${path}`, { headers })
-        const text = await response.text()
-        let data = null
-        try {
-          data = text ? JSON.parse(text) : null
-        } catch (_) {}
-
-        if (!response.ok) {
-          throw buildApiError(response, data, text)
-        }
-
-        return {
-          text,
-          contentType:
-            response.headers.get('content-type') || 'application/octet-stream; charset=utf-8',
-        }
-      } catch (err) {
-        if (err instanceof Error) throw err
-        throw new Error('网络请求失败')
-      }
-    },
-
-    createBlobUrl(text, contentType) {
-      return URL.createObjectURL(new Blob([text], { type: contentType }))
-    },
-
-    openObjectUrl(url) {
-      const openedWindow = window.open(url, '_blank', 'noopener,noreferrer')
-      if (!openedWindow) {
-        throw new Error('浏览器阻止了新窗口，请允许当前站点打开新标签页')
-      }
-    },
-
-    revokeObjectUrlLater(url, delayMs = 120000) {
-      window.setTimeout(() => URL.revokeObjectURL(url), delayMs)
-    },
-
-    prepareAuthorizedHtmlDocument(html, replacements = {}) {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(html, 'text/html')
-      const replacementEntries = Object.entries(replacements)
-
-      doc.querySelectorAll('[href], [src]').forEach((node) => {
-        ;['href', 'src'].forEach((attr) => {
-          if (!node.hasAttribute(attr)) return
-
-          const value = String(node.getAttribute(attr) || '')
-          if (
-            !value ||
-            value.startsWith('#') ||
-            value.startsWith('data:') ||
-            value.startsWith('blob:')
-          ) {
-            return
-          }
-
-          const matchedReplacement = replacementEntries.find(([from]) => value === from)
-          if (matchedReplacement) {
-            node.setAttribute(attr, matchedReplacement[1])
-            return
-          }
-
-          if (value.startsWith('/')) {
-            node.setAttribute(attr, new URL(value, this.baseApiUrl).toString())
-          }
-        })
+    async fetchDocsSpec(mode) {
+      const path = mode === 'admin' ? '/api/admin/openapi' : '/api-docs-spec.json'
+      return this.apiFetch(path, {
+        headers: {
+          Accept: 'application/json',
+        },
       })
-
-      return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`
     },
 
-    async openInternalApiDocs() {
-      if (!this.canUseAdminActions) {
-        this.showError('当前密钥为只读，无法打开内部文档')
-        return
+    async ensureDocsModeLoaded(mode = this.docsMode) {
+      if (mode === 'admin' && !this.canUseAdminActions) {
+        this.docsMode = 'public'
+        this.showError('当前密钥为只读，无法查看内部接口文档')
+        mode = 'public'
       }
-      if (this.adminDocsOpening) return
-      this.adminDocsOpening = true
 
-      let docsUrl = ''
-      let openapiUrl = ''
+      const requestToken = ++this.docsRequestToken
+      this.docsLoading = true
+      this.docsError = ''
+
       try {
-        const [docsAsset, openapiAsset] = await Promise.all([
-          this.fetchAuthorizedAsset('/api/admin/docs', 'text/html,application/xhtml+xml'),
-          this.fetchAuthorizedAsset('/api/admin/openapi', 'application/json'),
-        ])
-
-        openapiUrl = this.createBlobUrl(
-          openapiAsset.text,
-          openapiAsset.contentType || 'application/json; charset=utf-8'
-        )
-        const html = this.prepareAuthorizedHtmlDocument(docsAsset.text, {
-          '/api/admin/openapi': openapiUrl,
-        })
-        docsUrl = this.createBlobUrl(html, docsAsset.contentType || 'text/html; charset=utf-8')
-        this.openObjectUrl(docsUrl)
-        this.revokeObjectUrlLater(docsUrl)
-        this.revokeObjectUrlLater(openapiUrl)
+        if (!this.docsSpecs[mode]) {
+          const spec = await this.fetchDocsSpec(mode)
+          if (requestToken !== this.docsRequestToken) return
+          this.docsSpecs[mode] = spec
+        }
+        await this.renderDocsMode(mode, requestToken)
+        if (requestToken !== this.docsRequestToken) return
       } catch (e) {
-        if (docsUrl) URL.revokeObjectURL(docsUrl)
-        if (openapiUrl) URL.revokeObjectURL(openapiUrl)
-        this.showError('打开内部 API 文档失败: ' + e.message)
+        if (requestToken !== this.docsRequestToken) return
+        this.docsRenderedMode = ''
+        this.docsError = `文档加载失败: ${e.message}`
+        const docsRoot = this.$refs?.docsRoot
+        if (docsRoot) docsRoot.innerHTML = ''
+        this.showError(this.docsError)
       } finally {
-        this.adminDocsOpening = false
+        if (requestToken !== this.docsRequestToken) return
+        this.docsLoading = false
       }
+    },
+
+    async renderDocsMode(mode = this.docsMode, requestToken = this.docsRequestToken) {
+      const spec = this.docsSpecs[mode]
+      if (!spec) return
+
+      await new Promise((resolve) => this.$nextTick(resolve))
+      if (requestToken !== this.docsRequestToken) return
+      const docsRoot = this.$refs?.docsRoot
+      if (!docsRoot) return
+
+      if (!window.KemailDocsView || typeof window.KemailDocsView.renderInto !== 'function') {
+        throw new Error('文档渲染器未加载')
+      }
+
+      window.KemailDocsView.renderInto(docsRoot, spec, {
+        embedded: true,
+        mode,
+        serverUrl: this.baseApiUrl,
+        machineHref: mode === 'admin' ? '' : '/openapi.json',
+        machineLabel: mode === 'admin' ? '' : '/openapi.json',
+        title: mode === 'admin' ? '内部接口文档' : '公开接口文档',
+        description: spec?.info?.description || '',
+      })
+      if (requestToken !== this.docsRequestToken) return
+      this.docsRenderedMode = mode
     },
 
     setGlobalNotice(message, tone = 'error') {
@@ -569,10 +537,6 @@ function createMailAppState() {
 
     get authSubmitLabel() {
       return this.authLoading ? '登陆中...' : '进入控制台'
-    },
-
-    get internalApiDocsButtonLabel() {
-      return this.adminDocsOpening ? '内部文档打开中...' : '内部文档'
     },
 
     // --- Dashboard & Charts --- //
@@ -670,7 +634,6 @@ function createMailAppState() {
         nextTab = 'inbox'
       }
       this.activeTab = nextTab
-      this.showDashboard = nextTab === 'dashboard'
       if (nextTab === 'dashboard') {
         const shouldRefresh =
           this.statsNeedsRefresh ||
@@ -679,6 +642,33 @@ function createMailAppState() {
           this.fetchStats()
         }
       }
+    },
+
+    async showDocsTab() {
+      this.switchTab('docs')
+      await this.ensureDocsModeLoaded(this.docsMode)
+    },
+
+    async showDocsPublicMode() {
+      this.docsMode = 'public'
+      if (!this.isDocsTab) {
+        await this.showDocsTab()
+        return
+      }
+      await this.ensureDocsModeLoaded('public')
+    },
+
+    async showDocsAdminMode() {
+      if (!this.canUseAdminActions) {
+        this.showError('当前密钥为只读，无法查看内部接口文档')
+        return
+      }
+      this.docsMode = 'admin'
+      if (!this.isDocsTab) {
+        await this.showDocsTab()
+        return
+      }
+      await this.ensureDocsModeLoaded('admin')
     },
 
     get isDashboardTab() {
@@ -693,6 +683,10 @@ function createMailAppState() {
       return this.activeTab === 'domains'
     },
 
+    get isDocsTab() {
+      return this.activeTab === 'docs'
+    },
+
     get shellClass() {
       return { 'is-hidden': !this.authorized }
     },
@@ -703,6 +697,10 @@ function createMailAppState() {
 
     get domainsPanelClass() {
       return { 'is-hidden': !this.isDomainsTab }
+    },
+
+    get docsPanelClass() {
+      return { 'is-hidden': !this.isDocsTab }
     },
 
     get workspaceClass() {
@@ -731,6 +729,57 @@ function createMailAppState() {
 
     get domainsTabClass() {
       return { active: this.activeTab === 'domains' }
+    },
+
+    get docsTabClass() {
+      return { active: this.activeTab === 'docs' }
+    },
+
+    get docsSummaryLabel() {
+      if (this.docsLoading) return '正在准备文档...'
+      if (this.docsMode === 'admin') return '当前查看内部接口文档'
+      return '当前查看公开主链接口文档'
+    },
+
+    get docsSubnoteLabel() {
+      if (this.docsMode === 'admin') {
+        return '内部接口文档包含公开主链、调试回溯和后台能力，仅管理员密钥可见。'
+      }
+      return '公开接口文档只保留推荐给第三方自动化与 AI 的主链能力；机器契约继续单独保留。'
+    },
+
+    get docsPublicModeButtonClass() {
+      return {
+        'btn-primary': this.docsMode === 'public',
+        'btn-secondary': this.docsMode !== 'public',
+      }
+    },
+
+    get showDocsMachineLink() {
+      return this.docsMode === 'public'
+    },
+
+    get docsMachineLinkHref() {
+      return '/openapi.json'
+    },
+
+    get docsMachineLinkCode() {
+      return '/openapi.json'
+    },
+
+    get docsAdminModeButtonClass() {
+      return {
+        'btn-primary': this.docsMode === 'admin',
+        'btn-secondary': this.docsMode !== 'admin',
+      }
+    },
+
+    get showDocsErrorState() {
+      return Boolean(this.docsError) && !this.docsLoading
+    },
+
+    get showDocsContentState() {
+      return !this.docsLoading && !this.docsError && this.docsRenderedMode === this.docsMode
     },
 
     renderCharts(trendSeries, sendersList) {

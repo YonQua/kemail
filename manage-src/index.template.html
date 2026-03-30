@@ -5,7 +5,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>私有邮箱控制台 - Private Mail Console</title>
+    <link rel="stylesheet" href="__UI_FOUNDATION_CSS__" />
     <link rel="stylesheet" href="__MANAGE_CSS__" />
+    <link rel="stylesheet" href="__API_DOCS_CSS__" />
+    <script src="__API_DOCS_JS__" defer></script>
     <!-- Custom Script (Must be loaded before Alpine so alpine:init works) -->
     <script src="__MANAGE_JS__" defer></script>
     <script src="__CHART_JS__" defer></script>
@@ -23,17 +26,13 @@
                 <p class="auth-subtitle">基于 Cloudflare Workers 的无服务器邮箱系统</p>
             </div>
             <div>
-                <label for="apiKey" class="auth-label">只读密钥 / 管理员密钥 / API Key</label>
-                <input type="password" id="apiKey" :value="authInput" :disabled="authLoading" placeholder="输入 API Key"
+                <label for="apiKey" class="auth-label">只读密钥 / 管理员密钥</label>
+                <input type="password" id="apiKey" :value="authInput" :disabled="authLoading" placeholder="输入只读密钥或管理员密钥"
                     autocomplete="off" @input="setAuthInput" @keyup.enter="login" />
             </div>
             <p class="auth-note">密钥仅保留在当前页面内存中，刷新或关闭页面后需要重新输入。</p>
             <button type="button" class="btn btn-primary auth-submit" @click="login" :disabled="authLoading"
                 x-text="authSubmitLabel"></button>
-            <div class="auth-links">
-                <a class="btn btn-secondary btn-link" href="/api-docs" target="_blank" rel="noopener noreferrer">查看 API
-                    文档</a>
-            </div>
             <div class="auth-error" :class="authErrorClass" x-text="authError"></div>
         </div>
     </div>
@@ -48,14 +47,9 @@
                     <template x-if="canUseAdminActions">
                         <button class="tab-btn" :class="domainsTabClass" @click="showDomainsTab">域名池管理</button>
                     </template>
+                    <button class="tab-btn" :class="docsTabClass" @click="showDocsTab">文档中心</button>
                 </div>
                 <div class="tabs-actions">
-                    <a class="btn btn-secondary btn-link" href="/api-docs" target="_blank" rel="noopener noreferrer">API
-                        文档</a>
-                    <template x-if="canUseAdminActions">
-                        <button class="btn btn-secondary btn-link" type="button" @click="openInternalApiDocs"
-                            :disabled="adminDocsOpening" x-text="internalApiDocsButtonLabel"></button>
-                    </template>
                     <button class="btn btn-icon" @click="logout" title="退出登录">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -251,6 +245,49 @@
                         </table>
                     </div>
                 </template>
+            </div>
+        </section>
+
+        <section class="docs-panel" :class="docsPanelClass">
+            <div class="docs-panel-header">
+                <div class="panel-title">
+                    <h2>文档中心</h2>
+                    <span x-text="docsSummaryLabel"></span>
+                    <p class="panel-subnote" x-text="docsSubnoteLabel"></p>
+                    <template x-if="showDocsMachineLink">
+                        <div class="docs-panel-meta">
+                            <a class="docs-panel-link" :href="docsMachineLinkHref" target="_blank"
+                                rel="noopener noreferrer">
+                                <span>机器契约</span>
+                                <code x-text="docsMachineLinkCode"></code>
+                            </a>
+                        </div>
+                    </template>
+                </div>
+                <div class="docs-panel-actions">
+                    <button class="btn" :class="docsPublicModeButtonClass" @click="showDocsPublicMode">公开接口</button>
+                    <template x-if="canUseAdminActions">
+                        <button class="btn" :class="docsAdminModeButtonClass" @click="showDocsAdminMode">内部接口</button>
+                    </template>
+                </div>
+            </div>
+            <div class="docs-panel-body">
+                <div class="docs-panel-canvas">
+                    <div class="docs-panel-scroll">
+                        <template x-if="docsLoading">
+                            <div class="detail-empty docs-panel-state">
+                                <p>正在加载文档内容...</p>
+                            </div>
+                        </template>
+                        <template x-if="showDocsErrorState">
+                            <div class="detail-empty docs-panel-state">
+                                <p x-text="docsError"></p>
+                            </div>
+                        </template>
+                        <div class="docs-panel-content" x-ref="docsRoot"
+                            :class="{ 'is-hidden': !showDocsContentState }"></div>
+                    </div>
+                </div>
             </div>
         </section>
 

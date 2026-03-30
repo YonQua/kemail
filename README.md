@@ -136,8 +136,8 @@ npx wrangler secret put CLOUDFLARE_API_TOKEN
 
 变量说明：
 
-- `READ_API_KEY`：对外查询与常规读写流程
-- `ADMIN_API_KEY`：后台管理能力
+- `READ_API_KEY`：发号、消费最新地址邮件、显式删除与标记已读
+- `ADMIN_API_KEY`：额外拥有星标、富解析、原始 MIME 与域名池管理能力
 - `CLOUDFLARE_API_TOKEN`：域名池同步使用的 Cloudflare Token
 
 如果暂时不用域名池同步，可以不配置 `CLOUDFLARE_API_TOKEN`。
@@ -172,22 +172,30 @@ npm run deploy
 
 - 公开 API 文档：`/api-docs`
 - 公开 OpenAPI：`/openapi.json`
-- 公开运行时版本：`/api/version`
-- 管理员内部文档：`/api/admin/docs`
+- 运行时版本检查：`/api/version`
 - 管理员内部 OpenAPI：`/api/admin/openapi`
 
-更完整的请求与响应结构以 [`specs/openapi.json`](./specs/openapi.json) 和运行中的文档页为准。
+说明：
+
+- 公开 `/api-docs` / `/openapi.json` 只保留推荐给第三方自动化和 AI 的两步主链：发号、消费最新地址邮件
+- 管理页现在内置“文档中心”视图；只读密钥可查看公开接口，管理员密钥可在公开/内部接口之间切换；这是当前后台查看文档的主入口
+- `GET /api/latest`、`GET /api/emails`、详情读取、显式删除、批量标已读等高级接口仍保留实现，但主要放在内部/管理员文档中
+- `GET /api/version` 仍保留为运行时发布校验入口，但不再放入公开 OpenAPI 契约
+- 更完整的请求与响应结构以 [`specs/openapi.json`](./specs/openapi.json) 和运行中的文档页为准
 
 ## 权限说明
 
-- `READ_API_KEY` 可用于发号、查列表、查详情、查最新邮件、删邮件
-- `ADMIN_API_KEY` 额外拥有星标、标记已读、富解析、原始 MIME 与域名池管理能力
+- `READ_API_KEY` 可用于发号、消费最新地址邮件、显式删除与标记已读
+- `ADMIN_API_KEY` 额外拥有星标、富解析、原始 MIME 与域名池管理能力
 - 管理页支持只读密钥登录；只读会话不会展示管理员入口
 
 ## 运行时行为
 
 - `POST /api/addresses/generate` 是推荐发号入口
-- `GET /api/version` 可公开查看当前线上实例暴露的版本号
+- `POST /api/latest/consume` 是推荐的验证码消费入口；默认只匹配最新地址未读邮件，可选择 `peek`、`mark_read` 或 `delete`
+- `GET /api/version` 仅用于手工确认线上实例当前跑的是哪一版，不属于公开主链契约
 - Workers KV 只承担未鉴权 API 的防刷限流
+- 已鉴权请求按 read / write / analysis / rich 四类走 Worker 进程内限流，不再持续写入 Workers KV
 - `/api/latest` 当前直接走 D1 查询，性能依赖 `idx_recipient_received_at`
+- `GET /api/latest`、`GET /api/emails` 与详情/删除/批量标已读等接口仍保留，主要用于内部调试、管理端和高级脚本
 - 富解析缓存当前为 Worker 进程内短 TTL 小容量缓存，不应视为持久缓存

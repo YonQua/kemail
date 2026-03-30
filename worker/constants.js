@@ -39,11 +39,12 @@ export const STATIC_DOCUMENT_PATHS = new Map([
   ['/index.html', '/index.html'],
   ['/api-docs', '/api-docs.html'],
   ['/api-docs.html', '/api-docs.html'],
+  ['/api-docs-spec.json', '/api-docs-spec.json'],
   ['/openapi.json', '/openapi.json'],
 ])
 export const STATIC_ASSET_PREFIX = '/assets/'
 export const IMMUTABLE_STATIC_ASSET_PATTERN =
-  /^\/assets\/(?:manage|api-docs|vendor-chart|vendor-alpine)\.[a-f0-9]{10}\.(css|js)$/
+  /^\/assets\/(?:manage|api-docs|ui-foundation|vendor-chart|vendor-alpine)\.[a-f0-9]{10}\.(css|js)$/
 export const RESPONSE_SECURITY_HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',

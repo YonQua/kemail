@@ -13,9 +13,3 @@ export async function handleAdminOpenApiRequest(request, env) {
   if (authFailure) return authFailure
   return fetchStaticAssetByPath(request, env, '/admin-openapi.json', '/openapi.json')
 }
-
-export async function handleAdminApiDocsRequest(request, env) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-  return fetchStaticAssetByPath(request, env, '/admin-api-docs.html', '/admin-api-docs.html')
-}

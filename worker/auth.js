@@ -126,6 +126,7 @@ export function authenticatedRateLimitPolicy(request, url, path) {
   const isAnalysisPath = path.startsWith('/api/analysis/')
   const isWritePath =
     method === 'DELETE' ||
+    path === '/api/latest/consume' ||
     path === '/api/emails/delete' ||
     path === '/api/emails/read' ||
     path === '/api/emails/star'

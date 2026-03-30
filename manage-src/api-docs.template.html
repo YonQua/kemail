@@ -6,75 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
     <title>__API_DOCS_TITLE__</title>
     <meta name="description" content="__API_DOCS_META_DESCRIPTION__" />
+    <link rel="stylesheet" href="__UI_FOUNDATION_CSS__" />
     <link rel="stylesheet" href="__API_DOCS_CSS__" />
+    <script id="kemail-docs-bootstrap" type="application/json">__API_DOCS_BOOTSTRAP__</script>
+    <script src="__API_DOCS_JS__" defer></script>
 </head>
 
-<body>
-    <div class="docs-shell">
-        <header class="docs-hero">
-            <div class="hero-grid">
-                <div class="hero-copy">
-                    <p class="hero-eyebrow">Contract-first Reference</p>
-                    <h1>__API_DOCS_TITLE__</h1>
-                    <p class="hero-description">__API_DOCS_DESCRIPTION__</p>
-                    <div class="hero-actions">
-                        __API_DOCS_HERO_LINKS__
-                    </div>
-                    <div class="hero-note">
-                        <span>使用建议</span>
-                        <p>先用 Quick Start 跑通主链路，再按左侧导航跳到具体接口；机器可读规范与人类可读说明保持同源。</p>
-                    </div>
-                </div>
-                <div class="hero-panel">
-                    <div class="hero-panel-card">
-                        <span>Base URL</span>
-                        <strong>__API_SERVER_URL__</strong>
-                    </div>
-                    <div class="hero-panel-card">
-                        <span>OpenAPI</span>
-                        <strong>__OPENAPI_JSON_LABEL__</strong>
-                    </div>
-                    <div class="hero-panel-card">
-                        <span>版本</span>
-                        <strong>__API_VERSION__</strong>
-                    </div>
-                </div>
-            </div>
-        </header>
-
-        <main class="docs-layout">
-            <aside class="docs-sidebar">
-                <div class="sidebar-card">
-                    <p class="sidebar-title">快速导航</p>
-                    __API_DOCS_NAV__
-                </div>
-            </aside>
-
-            <div class="docs-content">
-                <section class="docs-overview">
-                    <div class="section-heading">
-                        <p class="section-kicker">Overview</p>
-                        <h2>接入前先看这 3 件事</h2>
-                    </div>
-                    <div class="overview-grid">
-                        __API_DOCS_OVERVIEW_CARDS__
-                    </div>
-                </section>
-
-                <section class="docs-quickstart">
-                    <div class="section-heading">
-                        <p class="section-kicker">Quick Start</p>
-                        <h2>最常见调用流程</h2>
-                    </div>
-                    <div class="quickstart-grid">
-                        __API_DOCS_QUICKSTART__
-                    </div>
-                </section>
-
-                __API_DOCS_SECTIONS__
-            </div>
-        </main>
-    </div>
+<body class="docs-page">
+    <div id="docs-root" class="docs-page-shell"></div>
 </body>
 
 </html>

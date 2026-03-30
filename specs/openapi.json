@@ -18,10 +18,16 @@
   ],
   "tags": [
     {
-      "name": "external",
-      "description": "第三方业务、自动化脚本和 AI 最常用的接入接口。它们优先关注“发地址、查最新地址、列出邮件、读取详情”这几条主链路。",
-      "x-title": "对外集成接口",
-      "x-kicker": "External Integration"
+      "name": "external-core",
+      "description": "第三方业务、自动化脚本和 AI 最推荐直接接入的主链接口，围绕“发地址、消费最新地址邮件”这条最短路径收口。",
+      "x-title": "对外集成接口 · 主链",
+      "x-kicker": "External Core"
+    },
+    {
+      "name": "external-ops",
+      "description": "仍然保留实现、但更偏内部调试和高级用法的外部接口，例如 latest 查询、列表回溯、详情读取、显式删除和批量标已读。",
+      "x-title": "对外扩展接口 · 高级/内部",
+      "x-kicker": "External Ops"
     },
     {
       "name": "admin-mail",
@@ -54,18 +60,11 @@
         "description": "推荐的发号入口。返回完整邮箱地址，后续查询时直接把这个地址原样传回即可。"
       },
       {
-        "method": "get",
-        "path": "/api/latest",
+        "method": "post",
+        "path": "/api/latest/consume",
         "kicker": "Step 2",
-        "title": "查询最新地址邮件",
-        "description": "最适合验证码和登录流程的轮询接口。传入完整邮箱地址，直接拿最近一封邮件。"
-      },
-      {
-        "method": "get",
-        "path": "/api/emails",
-        "kicker": "Step 3",
-        "title": "列出一个邮箱的邮件列表",
-        "description": "适合回溯历史邮件、调试收信和做多封邮件展示。支持地址、时间、关键词等过滤参数。"
+        "title": "消费一封最新地址邮件",
+        "description": "统一的验证码消费入口。默认只取最新地址未读邮件，并可选择 peek、mark_read 或 delete 三种动作。"
       }
     ]
   },
@@ -75,7 +74,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "API Key",
-        "description": "统一使用 `Authorization: Bearer <TOKEN>`。对外接入场景下，`READ_API_KEY` 与 `ADMIN_API_KEY` 都可用于发号、查信和删信；星标、标记已读、富解析、原始 MIME 与域名池管理仍需管理员密钥。"
+        "description": "统一使用 `Authorization: Bearer <TOKEN>`。公开主链中的发号与 consume 接口都可使用 `READ_API_KEY` 或 `ADMIN_API_KEY`；高级查询/回溯接口仅在内部文档展示；星标、富解析、原始 MIME 与域名池管理仍需管理员密钥。"
       }
     },
     "schemas": {
@@ -407,7 +406,7 @@
   "paths": {
     "/api/version": {
       "get": {
-        "tags": ["external"],
+        "tags": ["external-core"],
         "summary": "查看当前线上版本",
         "description": "公开返回当前部署实例暴露的应用版本号与 release tag，适合排查线上实例到底跑的是哪一版。",
         "operationId": "getRuntimeVersion",
@@ -436,7 +435,7 @@
     },
     "/api/addresses/generate": {
       "post": {
-        "tags": ["external"],
+        "tags": ["external-core"],
         "summary": "生成一个完整邮箱地址",
         "description": "推荐的发号入口。返回完整邮箱地址，客户端后续查询时直接把这个地址原样传回即可。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用。",
         "operationId": "generateAddress",
@@ -485,9 +484,6 @@
           "401": {
             "description": "未提供或提供了错误的 API Key"
           },
-          "403": {
-            "description": "当前密钥不是管理员密钥"
-          },
           "409": {
             "description": "当前没有可发放的 active 域名"
           },
@@ -499,9 +495,9 @@
     },
     "/api/latest": {
       "get": {
-        "tags": ["external"],
+        "tags": ["external-ops"],
         "summary": "查询某个邮箱最新地址邮件",
-        "description": "最适合验证码轮询的接口。必须传完整邮箱地址，不支持只传 local-part。",
+        "description": "高级纯读接口。必须传完整邮箱地址，不支持只传 local-part；更推荐普通第三方自动化直接使用 `POST /api/latest/consume`。",
         "operationId": "getLatestEmail",
         "x-permission": "read",
         "x-scope": "external",
@@ -533,7 +529,42 @@
                     "email": {
                       "oneOf": [
                         {
-                          "$ref": "#/components/schemas/EmailListItem"
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "recipient": {
+                              "type": "string",
+                              "format": "email"
+                            },
+                            "sender": {
+                              "type": "string"
+                            },
+                            "subject": {
+                              "type": "string"
+                            },
+                            "body": {
+                              "type": "string"
+                            },
+                            "received_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "is_read": {
+                              "type": "integer",
+                              "enum": [0, 1]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "recipient",
+                            "sender",
+                            "subject",
+                            "body",
+                            "received_at",
+                            "is_read"
+                          ]
                         },
                         {
                           "type": "null"
@@ -551,10 +582,8 @@
                     "sender": "noreply@tm.openai.com",
                     "subject": "你的 ChatGPT 代码为 014684",
                     "body": "输入此临时验证码以继续：\n014684\n如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
-                    "preview": "输入此临时验证码以继续： 014684 如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
                     "received_at": "2026-03-21T09:02:03.530Z",
-                    "is_read": 0,
-                    "is_starred": 0
+                    "is_read": 0
                   }
                 }
               }
@@ -572,9 +601,135 @@
         }
       }
     },
+    "/api/latest/consume": {
+      "post": {
+        "tags": ["external-core"],
+        "summary": "消费一封最新地址邮件",
+        "description": "公开主链推荐入口。默认只匹配最新地址未读邮件，并通过 `action` 控制是只查看、标记已读还是删除；返回值始终带上选中的邮件快照，便于直接提取验证码。",
+        "operationId": "consumeLatestEmail",
+        "x-permission": "read",
+        "x-scope": "external",
+        "x-order": 20,
+        "requestBody": {
+          "required": true,
+          "description": "目标邮箱地址与消费动作。`unread_only` 默认 `true`，`action` 默认 `peek`。",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "unread_only": {
+                    "type": "boolean"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": ["peek", "mark_read", "delete"]
+                  }
+                },
+                "required": ["address"]
+              },
+              "example": {
+                "address": "oc8f3ab12cd@example.test",
+                "unread_only": true,
+                "action": "delete"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功返回目标邮件；如果当前没有匹配邮件，`email` 为 null。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "email": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "integer"
+                            },
+                            "recipient": {
+                              "type": "string",
+                              "format": "email"
+                            },
+                            "sender": {
+                              "type": "string"
+                            },
+                            "subject": {
+                              "type": "string"
+                            },
+                            "body": {
+                              "type": "string"
+                            },
+                            "received_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "is_read": {
+                              "type": "integer",
+                              "enum": [0, 1]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "recipient",
+                            "sender",
+                            "subject",
+                            "body",
+                            "received_at",
+                            "is_read"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["ok", "email"]
+                },
+                "example": {
+                  "ok": true,
+                  "email": {
+                    "id": 777,
+                    "recipient": "oc8f3ab12cd@example.test",
+                    "sender": "noreply@tm.openai.com",
+                    "subject": "你的 ChatGPT 代码为 014684",
+                    "body": "输入此临时验证码以继续：\n014684\n如果并非你本人尝试创建 ChatGPT 帐户，请忽略此电子邮件。",
+                    "received_at": "2026-03-21T09:02:03.530Z",
+                    "is_read": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "缺少 address、action 非法、unread_only 非法或请求体不是合法 JSON"
+          },
+          "401": {
+            "description": "未提供或提供了错误的 API Key"
+          },
+          "429": {
+            "description": "请求过快，触发 consume 写操作限流"
+          }
+        }
+      }
+    },
     "/api/emails": {
       "get": {
-        "tags": ["external"],
+        "tags": ["external-ops"],
         "summary": "列出邮件列表",
         "description": "支持按地址、发件人、主题、关键字、时间范围和排序方式查询。若 `summary=1`，返回更轻量的摘要结构。",
         "operationId": "listEmails",
@@ -773,7 +928,7 @@
     },
     "/api/emails/{id}": {
       "get": {
-        "tags": ["external"],
+        "tags": ["external-ops"],
         "summary": "读取单封邮件详情",
         "description": "默认返回轻量详情；若传 `rich=1`，则需要管理员密钥并尝试返回富解析内容。",
         "operationId": "getEmailDetail",
@@ -865,9 +1020,9 @@
         }
       },
       "delete": {
-        "tags": ["external"],
+        "tags": ["external-ops"],
         "summary": "删除单封邮件",
-        "description": "对外删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；删除后会同步清理富解析缓存，并在必要时刷新 latest 缓存。",
+        "description": "对外删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；删除后会同步清理富解析缓存，并使看板统计缓存失效。",
         "operationId": "deleteEmail",
         "x-permission": "read",
         "x-scope": "external",
@@ -984,9 +1139,9 @@
     },
     "/api/emails/delete": {
       "post": {
-        "tags": ["external"],
+        "tags": ["external-ops"],
         "summary": "批量删除邮件",
-        "description": "对外批量删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；`ids` 不能为空，且单次最多 100 个。",
+        "description": "对外批量删除入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；删除成功后会清理对应邮件的富解析缓存，并使看板统计缓存失效。`ids` 不能为空，且单次最多 100 个。",
         "operationId": "deleteEmailsBatch",
         "x-permission": "read",
         "x-scope": "external",
@@ -1039,12 +1194,12 @@
     },
     "/api/emails/read": {
       "put": {
-        "tags": ["admin-mail"],
+        "tags": ["external-ops"],
         "summary": "批量更新已读状态",
-        "description": "管理员写接口。更新后会刷新受影响收件人的 latest 缓存。",
+        "description": "显式批量标记已读入口。`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用；更新后会使看板统计缓存失效。",
         "operationId": "updateEmailsReadState",
-        "x-permission": "admin",
-        "x-scope": "admin",
+        "x-permission": "read",
+        "x-scope": "external",
         "x-order": 40,
         "requestBody": {
           "required": true,
@@ -1076,8 +1231,8 @@
           "401": {
             "description": "未提供或提供了错误的 API Key"
           },
-          "403": {
-            "description": "当前密钥不是管理员密钥"
+          "429": {
+            "description": "请求过快，触发写操作限流"
           }
         }
       }
@@ -1086,7 +1241,7 @@
       "put": {
         "tags": ["admin-mail"],
         "summary": "批量更新星标状态",
-        "description": "管理员写接口。更新后会刷新受影响收件人的 latest 缓存。",
+        "description": "管理员写接口。更新后会使看板统计缓存失效。",
         "operationId": "updateEmailsStarState",
         "x-permission": "admin",
         "x-scope": "admin",

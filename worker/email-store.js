@@ -217,12 +217,50 @@ export function formatEmailSummary(row) {
   }
 }
 
-export async function selectLatestEmailRow(env, recipient) {
-  return env.DB.prepare(
-    `SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE recipient = ? ORDER BY received_at DESC LIMIT 1`
-  )
-    .bind(recipient)
-    .first()
+export async function selectLatestEmailRow(env, recipient, options = {}) {
+  const unreadOnly = options?.unreadOnly === true
+  const sql = unreadOnly
+    ? `SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE recipient = ? AND is_read = 0 ORDER BY received_at DESC LIMIT 1`
+    : `SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE recipient = ? ORDER BY received_at DESC LIMIT 1`
+
+  return env.DB.prepare(sql).bind(recipient).first()
+}
+
+export async function consumeLatestEmailRow(env, recipient, options = {}) {
+  const unreadOnly = options?.unreadOnly === true
+  const action = normalizeText(options?.action || 'peek').toLowerCase()
+  const selectorWhere = unreadOnly ? 'recipient = ? AND is_read = 0' : 'recipient = ?'
+
+  if (action === 'peek') {
+    return selectLatestEmailRow(env, recipient, { unreadOnly })
+  }
+
+  if (action === 'mark_read') {
+    return env.DB.prepare(
+      `UPDATE emails
+       SET is_read = 1
+       WHERE id = (
+         SELECT id FROM emails WHERE ${selectorWhere} ORDER BY received_at DESC LIMIT 1
+       )
+       RETURNING ${EMAIL_DETAIL_FIELDS}`
+    )
+      .bind(recipient)
+      .first()
+  }
+
+  if (action === 'delete') {
+    return env.DB.prepare(
+      `DELETE FROM emails
+       WHERE id = (
+         SELECT id FROM emails WHERE ${selectorWhere} ORDER BY received_at DESC LIMIT 1
+       )
+       RETURNING ${EMAIL_DETAIL_FIELDS}`
+    )
+      .bind(recipient)
+      .first()
+  }
+
+  return null
 }
 
 export async function selectEmailRecipientById(env, id) {

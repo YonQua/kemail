@@ -4,7 +4,7 @@ import {
   handleAnalysisTrendRequest,
   invalidateAnalysisMemoryCache,
 } from './analysis.js'
-import { handleAdminApiDocsRequest, handleAdminOpenApiRequest } from './api-docs-handlers.js'
+import { handleAdminOpenApiRequest } from './api-docs-handlers.js'
 import { authErrorResponse, hasAdminAccess, hasReadAccess } from './auth.js'
 import { EMAIL_DETAIL_FIELDS, EMAIL_SUMMARY_FIELDS, MAX_BATCH_EMAIL_IDS } from './constants.js'
 import {
@@ -17,6 +17,7 @@ import {
 import {
   buildEmailDetail,
   buildEmailSource,
+  consumeLatestEmailRow,
   deleteEmailById,
   deleteEmailsByIds,
   formatEmailOutput,
@@ -43,6 +44,8 @@ import {
 } from './query.js'
 import { normalizeAddress, normalizeText } from './text-core.js'
 import { logError } from './text-logging.js'
+
+const LATEST_CONSUME_ACTIONS = new Set(['peek', 'mark_read', 'delete'])
 
 export function ensureApiReadAccess(request, env) {
   if (!hasReadAccess(request, env)) {
@@ -94,6 +97,44 @@ async function parseBatchMutationPayload(request, path, actionLabel) {
   return { payload, ids, errorResponse: null }
 }
 
+function parseBooleanFlag(value, defaultValue = false) {
+  if (value == null || value === '') return defaultValue
+  if (value === true || value === 1 || value === '1') return true
+  if (value === false || value === 0 || value === '0') return false
+  return null
+}
+
+async function parseLatestConsumePayload(request, path) {
+  const payload = await parseJsonPayload(request, path, 'Latest consume')
+  if (payload == null) {
+    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid request body' }, 400) }
+  }
+
+  const address = normalizeAddress(payload?.address)
+  if (!address) {
+    return { errorResponse: jsonResponse({ ok: false, error: 'Missing address' }, 400) }
+  }
+
+  const unreadOnly = parseBooleanFlag(payload?.unread_only, true)
+  if (unreadOnly == null) {
+    return {
+      errorResponse: jsonResponse({ ok: false, error: 'Invalid unread_only' }, 400),
+    }
+  }
+
+  const action = normalizeText(payload?.action || 'peek').toLowerCase()
+  if (!LATEST_CONSUME_ACTIONS.has(action)) {
+    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid action' }, 400) }
+  }
+
+  return {
+    address,
+    unreadOnly,
+    action,
+    errorResponse: null,
+  }
+}
+
 async function handleLatestRequest(env, url, path) {
   const address = normalizeAddress(url.searchParams.get('address'))
   if (!address) return jsonResponse({ ok: false, error: 'Missing address' }, 400)
@@ -105,6 +146,39 @@ async function handleLatestRequest(env, url, path) {
     return jsonResponse({ ok: true, email: out })
   } catch (error) {
     logError('Latest email query failed', error, { path, address })
+    return jsonResponse({ ok: false, error: 'Internal error' }, 500)
+  }
+}
+
+async function handleLatestConsumeRequest(request, env, path) {
+  const authFailure = ensureApiReadAccess(request, env)
+  if (authFailure) return authFailure
+
+  const { address, unreadOnly, action, errorResponse } = await parseLatestConsumePayload(
+    request,
+    path
+  )
+  if (errorResponse) return errorResponse
+
+  try {
+    const row = await consumeLatestEmailRow(env, address, { unreadOnly, action })
+    if (!row) {
+      return jsonResponse({ ok: true, email: null })
+    }
+
+    if (action === 'delete') {
+      await invalidateRichDetailCache(env, row.id)
+      invalidateAnalysisMemoryCache()
+      return jsonResponse({ ok: true, email: formatEmailOutput(row) })
+    }
+
+    if (action === 'mark_read') {
+      invalidateAnalysisMemoryCache()
+    }
+
+    return jsonResponse({ ok: true, email: formatEmailOutput(row) })
+  } catch (error) {
+    logError('Latest consume failed', error, { path, address, unreadOnly, action })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
@@ -292,7 +366,7 @@ async function handleEmailDetailRequest(request, env, url, path, id) {
 }
 
 async function handleEmailReadRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
+  const authFailure = ensureApiReadAccess(request, env)
   if (authFailure) return authFailure
 
   const { payload, ids, errorResponse } = await parseBatchMutationPayload(
@@ -339,6 +413,11 @@ async function handleEmailStarRequest(request, env, path) {
 
 // API 路由拆成独立 handler，降低 `fetch()` 分支深度并便于后续继续扩展。
 export async function handleApiRequest(request, env, url, path) {
+  if (path === '/api/latest/consume') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleLatestConsumeRequest(request, env, path)
+  }
+
   if (path === '/api/latest') {
     if (request.method !== 'GET') return methodNotAllowed(['GET'])
     return handleLatestRequest(env, url, path)
@@ -382,11 +461,6 @@ export async function handleApiRequest(request, env, url, path) {
   if (path === '/api/admin/domains') {
     if (request.method !== 'GET') return methodNotAllowed(['GET'])
     return handleManagedDomainsRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/docs') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAdminApiDocsRequest(request, env, path)
   }
 
   if (path === '/api/admin/openapi') {

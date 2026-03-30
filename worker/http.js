@@ -35,10 +35,13 @@ export function resolveStaticAssetPath(path) {
 }
 
 export function resolveManagedAssetFallbackPath(pathname) {
+  if (/^\/assets\/ui-foundation\.[a-f0-9]{10}\.css$/i.test(pathname))
+    return '/assets/ui-foundation.latest.css'
   if (/^\/assets\/manage\.[a-f0-9]{10}\.css$/i.test(pathname)) return '/assets/manage.latest.css'
   if (/^\/assets\/manage\.[a-f0-9]{10}\.js$/i.test(pathname)) return '/assets/manage.latest.js'
   if (/^\/assets\/api-docs\.[a-f0-9]{10}\.css$/i.test(pathname))
     return '/assets/api-docs.latest.css'
+  if (/^\/assets\/api-docs\.[a-f0-9]{10}\.js$/i.test(pathname)) return '/assets/api-docs.latest.js'
   if (/^\/assets\/vendor-chart\.[a-f0-9]{10}\.js$/i.test(pathname))
     return '/assets/vendor-chart.latest.js'
   if (/^\/assets\/vendor-alpine\.[a-f0-9]{10}\.js$/i.test(pathname))
@@ -54,7 +57,7 @@ export function getStaticAssetHeaders(pathname) {
     }
   }
 
-  if (pathname === '/openapi.json') {
+  if (pathname.endsWith('.json')) {
     return {
       'Cache-Control': 'no-store',
       ...RESPONSE_SECURITY_HEADERS,
