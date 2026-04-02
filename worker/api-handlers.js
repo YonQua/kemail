@@ -32,6 +32,16 @@ import {
   updateEmailStarState,
 } from './email-store.js'
 import { jsonResponse, methodNotAllowed } from './http.js'
+import {
+  handleCleanupRuleDetailRequest,
+  handleCleanupRulePreviewRequest,
+  handleCleanupRuleRunRequest,
+  handleCleanupRulesRequest,
+  handleCleanupRulesRunRequest,
+  handleGovernanceRetentionRunRequest,
+  handleGovernanceSettingsRequest,
+  handleGovernanceStatusRequest,
+} from './mail-governance-handlers.js'
 import { parseEmail } from './parser.js'
 import {
   buildEmailCountQuery,
@@ -478,6 +488,40 @@ export async function handleApiRequest(request, env, url, path) {
     return handleManagedDomainBatchPolicyRequest(request, env, path)
   }
 
+  if (path === '/api/admin/governance/settings') {
+    if (request.method !== 'GET' && request.method !== 'PUT') {
+      return methodNotAllowed(['GET', 'PUT'])
+    }
+    return handleGovernanceSettingsRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/governance/status') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET'])
+    return handleGovernanceStatusRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/governance/retention/run') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleGovernanceRetentionRunRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/cleanup-rules') {
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      return methodNotAllowed(['GET', 'POST'])
+    }
+    return handleCleanupRulesRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/cleanup-rules/preview') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleCleanupRulePreviewRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/cleanup-rules/run') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleCleanupRulesRunRequest(request, env, path)
+  }
+
   if (path === '/api/addresses/generate') {
     if (request.method !== 'POST') return methodNotAllowed(['POST'])
     return handleGeneratedAddressRequest(request, env, path)
@@ -498,6 +542,25 @@ export async function handleApiRequest(request, env, url, path) {
   if (managedDomainMatch) {
     if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
     return handleManagedDomainPolicyRequest(request, env, path, managedDomainMatch[1])
+  }
+
+  const cleanupRuleRunMatch = path.match(/^\/api\/admin\/cleanup-rules\/(\d+)\/run$/)
+  if (cleanupRuleRunMatch) {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleCleanupRuleRunRequest(request, env, path, parseInt(cleanupRuleRunMatch[1], 10))
+  }
+
+  const cleanupRuleDetailMatch = path.match(/^\/api\/admin\/cleanup-rules\/(\d+)$/)
+  if (cleanupRuleDetailMatch) {
+    if (request.method !== 'PUT' && request.method !== 'DELETE') {
+      return methodNotAllowed(['PUT', 'DELETE'])
+    }
+    return handleCleanupRuleDetailRequest(
+      request,
+      env,
+      path,
+      parseInt(cleanupRuleDetailMatch[1], 10)
+    )
   }
 
   return jsonResponse({ ok: false, error: 'Not found' }, 404)

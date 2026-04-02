@@ -61,7 +61,7 @@ function normalizeCount(row, key = 'total') {
   return Number(row?.[key] || 0)
 }
 
-export function buildUtcDayRange(days) {
+export function buildUtcDayRange(days, retentionDays = AUTO_CLEAN_DAYS) {
   const now = new Date()
   const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
   const start = new Date(todayStart.getTime() - (days - 1) * DAY_IN_MS)
@@ -70,7 +70,7 @@ export function buildUtcDayRange(days) {
     todayDay: todayStart.toISOString().slice(0, 10),
     startDay: start.toISOString().slice(0, 10),
     startIso: start.toISOString(),
-    retentionDays: AUTO_CLEAN_DAYS,
+    retentionDays,
     dayBucketTimezone: 'UTC',
   }
 }

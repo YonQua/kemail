@@ -19,11 +19,25 @@ import {
   methodNotAllowed,
   optionsResponse,
 } from './worker/http.js'
+import { executeScheduledGovernance } from './worker/mail-governance-executor.js'
+import { GovernanceTablesMissingError } from './worker/mail-governance-store.js'
 import { incrementReceivedMetrics } from './worker/metrics-store.js'
 import { decodeRawEmailBytes, parseEmail, readRawEmailBytes } from './worker/parser.js'
 import { handleStaticAssetRequest, handleStaticDocumentRequest } from './worker/static-assets.js'
 import { appendReadableNotice, normalizeAddress } from './worker/text-core.js'
 import { logError } from './worker/text-logging.js'
+
+async function runLegacyRetentionCleanup(env) {
+  const cutoffIso = new Date(Date.now() - AUTO_CLEAN_DAYS * DAY_IN_MS).toISOString()
+  const result = await env.DB.prepare('DELETE FROM emails WHERE received_at < ?')
+    .bind(cutoffIso)
+    .run()
+  const deleted = result.meta.changes || 0
+  return {
+    cutoffIso,
+    deleted,
+  }
+}
 
 export default {
   async email(message, env) {
@@ -139,20 +153,33 @@ export default {
   },
 
   async scheduled(_event, env) {
-    let cutoffIso = ''
     try {
-      // 统一使用 ISO 字符串比较，避免 SQLite datetime() 与 toISOString() 混用。
-      cutoffIso = new Date(Date.now() - AUTO_CLEAN_DAYS * DAY_IN_MS).toISOString()
-      const result = await env.DB.prepare('DELETE FROM emails WHERE received_at < ?')
-        .bind(cutoffIso)
-        .run()
-      const deleted = result.meta.changes || 0
-      if (deleted > 0) {
+      const outcome = await executeScheduledGovernance(env)
+      const totalDeleted =
+        Number(outcome?.retention?.deleted_count || 0) + Number(outcome?.rules?.deleted_count || 0)
+      if (totalDeleted > 0) {
         invalidateAnalysisMemoryCache()
-        console.log(`[定时清理] 已删除 ${deleted} 封超过 ${AUTO_CLEAN_DAYS} 天的旧邮件`)
+        console.log(
+          `[定时治理] retention=${Number(outcome?.retention?.deleted_count || 0)} rule_cleanup=${Number(outcome?.rules?.deleted_count || 0)}`
+        )
       }
     } catch (err) {
-      logError('Scheduled cleanup failed', err, { autoCleanDays: AUTO_CLEAN_DAYS, cutoffIso })
+      if (err instanceof GovernanceTablesMissingError) {
+        try {
+          const legacy = await runLegacyRetentionCleanup(env)
+          if (legacy.deleted > 0) {
+            invalidateAnalysisMemoryCache()
+            console.log(`[定时清理] 已删除 ${legacy.deleted} 封超过 ${AUTO_CLEAN_DAYS} 天的旧邮件`)
+          }
+          return
+        } catch (legacyError) {
+          logError('Scheduled legacy cleanup failed', legacyError, {
+            autoCleanDays: AUTO_CLEAN_DAYS,
+          })
+          return
+        }
+      }
+      logError('Scheduled cleanup failed', err, { autoCleanDays: AUTO_CLEAN_DAYS })
     }
   },
 }

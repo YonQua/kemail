@@ -11,6 +11,8 @@ export const WRITE_RATE_LIMIT = 60
 export const WRITE_RATE_WINDOW = 60
 
 export const AUTO_CLEAN_DAYS = 3
+export const MAX_GOVERNANCE_RETENTION_DAYS = 365
+export const DEFAULT_CLEANUP_RULE_DELETE_BATCH_SIZE = 200
 export const DAY_IN_MS = 24 * 60 * 60 * 1000
 export const DEFAULT_EMAIL_LIMIT = 20
 export const MAX_EMAIL_LIMIT = 100

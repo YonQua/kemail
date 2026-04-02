@@ -385,7 +385,14 @@ function buildManageAssets() {
   })
   const adminOpenapiSpec = filterSpecByTags(
     fullOpenapiSpec,
-    ['external-core', 'external-ops', 'admin-mail', 'admin-analytics', 'admin-domains'],
+    [
+      'external-core',
+      'external-ops',
+      'admin-mail',
+      'admin-analytics',
+      'admin-domains',
+      'admin-governance',
+    ],
     {
       infoTitle: 'kemail Admin API Docs',
       infoDescription:

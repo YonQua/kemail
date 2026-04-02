@@ -18,3 +18,9 @@ id = "YOUR_KV_NAMESPACE_ID"
 binding = "DB"
 database_name = "mail_db"
 database_id = "YOUR_D1_DATABASE_ID"
+
+# Cron Triggers 使用 UTC。建议把触发频率继续留在 Wrangler 配置里维护，
+# 而把“保留天数 / 清理规则 / 是否启用”这类治理策略交给管理端和 D1。
+[triggers]
+# 每小时执行一次
+crons = ["0 * * * *"]

@@ -47,6 +47,9 @@
                     <template x-if="canUseAdminActions">
                         <button class="tab-btn" :class="domainsTabClass" @click="showDomainsTab">域名池管理</button>
                     </template>
+                    <template x-if="canUseAdminActions">
+                        <button class="tab-btn" :class="governanceTabClass" @click="showGovernanceTab">管理</button>
+                    </template>
                     <button class="tab-btn" :class="docsTabClass" @click="showDocsTab">文档中心</button>
                 </div>
                 <div class="tabs-actions">
@@ -248,6 +251,279 @@
             </div>
         </section>
 
+        <section class="panel governance-panel" :class="governancePanelClass">
+            <div class="panel-header governance-panel-header">
+                <div class="panel-title">
+                    <h2 x-text="governancePageTitleLabel"></h2>
+                    <span x-text="governanceSummaryLabel"></span>
+                    <p class="panel-subnote" x-text="governancePageSubtitleLabel"></p>
+                </div>
+                <div class="governance-panel-actions">
+                    <button class="btn btn-secondary" @click="refreshGovernancePanel" :disabled="governanceLoading"
+                        x-text="governanceRefreshButtonLabel"></button>
+                    <button class="btn btn-primary" @click="runAllCleanupRules"
+                        :disabled="governanceRunAllRulesDisabled" x-text="runAllCleanupRulesLabel"></button>
+                </div>
+            </div>
+
+            <div class="governance-empty" x-show="showGovernanceMigrationState">
+                <p>邮件治理表尚未初始化，请先按 README 执行 D1 migration SQL 后再使用该模块。</p>
+            </div>
+
+            <div class="governance-empty" x-show="showGovernanceLoadingState">
+                <p>正在加载邮件治理数据...</p>
+            </div>
+
+            <div class="governance-panel-body" :class="governancePanelContentClass" x-show="showGovernanceBodyState">
+                <section class="governance-section governance-section-retention">
+                    <div class="governance-section-head">
+                        <div>
+                            <h3>自动保留策略</h3>
+                            <p>自动删除超过保留窗口的旧邮件。这里控制策略，cron 频率仍由 Wrangler 配置维护。</p>
+                        </div>
+                        <label class="governance-toggle">
+                            <span class="governance-toggle-copy">
+                                <strong>自动保留</strong>
+                                <em x-text="governanceRetentionStatusChipLabel"></em>
+                            </span>
+                            <span class="governance-toggle-control">
+                                <input type="checkbox" :checked="governanceSettings.retention_enabled"
+                                    @change="updateGovernanceRetentionEnabledByEvent" />
+                                <span class="governance-toggle-track"></span>
+                                <span class="governance-toggle-thumb"></span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="governance-retention-grid">
+                        <div class="governance-retention-main">
+                            <div class="governance-retention-controls">
+                                <label class="governance-inline-field">
+                                    <span>保留天数</span>
+                                    <div class="governance-inline-input">
+                                        <input type="number" min="1" step="1" :value="governanceSettings.retention_days"
+                                            @input="updateGovernanceRetentionDaysByEvent" />
+                                        <strong>天</strong>
+                                    </div>
+                                </label>
+
+                                <div class="governance-retention-actions">
+                                    <button class="btn btn-secondary" @click="saveGovernanceSettings"
+                                        :disabled="governanceSettingsSaving"
+                                        x-text="governanceSaveSettingsLabel"></button>
+                                    <button class="btn btn-primary" @click="runRetentionCleanup"
+                                        :disabled="governanceRetentionRunning"
+                                        x-text="governanceRetentionRunLabel"></button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="governance-retention-meta">
+                            <div class="governance-status-copy">
+                                <p class="governance-status-note" x-text="governanceRetentionExecutionSummary"></p>
+                                <p class="governance-status-note" x-text="governanceScheduledExecutionSummary"></p>
+                            </div>
+                            <template x-if="governanceRetentionState.last_error">
+                                <p class="governance-error-inline" x-text="governanceRetentionState.last_error"></p>
+                            </template>
+                            <template x-if="governanceScheduledState.last_error">
+                                <p class="governance-error-inline" x-text="governanceScheduledState.last_error"></p>
+                            </template>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="governance-section governance-section-rules">
+                    <div class="governance-section-head governance-section-head-rules">
+                        <div class="governance-section-title">
+                            <h3>自定义清理规则</h3>
+                            <p>把常见广告、摘要和通知邮件收成规则，规则匹配条件按 AND 组合，默认跳过星标邮件。</p>
+                        </div>
+                        <div class="governance-section-actions">
+                            <span class="chip" :class="governanceRulesStatusChipClass"
+                                x-text="governanceRulesStatusChipLabel"></span>
+                            <button class="btn btn-secondary" @click="openCreateGovernanceRuleForm"
+                                x-text="governanceOpenRuleModalLabel"></button>
+                        </div>
+                    </div>
+
+                    <div class="governance-rules-meta">
+                        <p x-text="governanceRulesCountLabel"></p>
+                        <p x-text="governanceRulesExecutionSummary"></p>
+                    </div>
+
+                    <template x-if="governanceRulesState.last_error">
+                        <p class="governance-error-inline" x-text="governanceRulesState.last_error"></p>
+                    </template>
+
+                    <template x-if="showGovernanceRulesEmpty">
+                        <div class="governance-rules-empty">
+                            <div>
+                                <strong>还没有清理规则</strong>
+                                <p>先创建一条规则，后面就可以在这里直接启停、执行和维护。</p>
+                            </div>
+                            <button class="btn btn-primary" @click="openCreateGovernanceRuleForm">新增规则</button>
+                        </div>
+                    </template>
+
+                    <template x-if="showGovernanceRulesTable">
+                        <div class="governance-table-shell">
+                            <div class="governance-table-wrap">
+                                <table class="governance-table">
+                                    <thead>
+                                        <tr>
+                                            <th>规则</th>
+                                            <th>匹配条件</th>
+                                            <th>状态</th>
+                                            <th>最近执行</th>
+                                            <th>累计删除</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="rule in cleanupRules" :key="rule.id">
+                                            <tr>
+                                                <td>
+                                                    <div class="governance-rule-main">
+                                                        <strong x-text="rule.name"></strong>
+                                                        <span class="governance-rule-id-label"
+                                                            x-text="rule.id_label"></span>
+                                                        <span x-text="rule.note_label"></span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="governance-rule-matchers" x-text="rule.matcher_summary">
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="governance-rule-status">
+                                                        <label class="governance-status-toggle">
+                                                            <input type="checkbox" :checked="rule.enabled"
+                                                                :data-rule-id="rule.id"
+                                                                @change="toggleCleanupRuleEnabledByEvent" />
+                                                            <span class="governance-status-track"></span>
+                                                            <span class="governance-status-thumb"></span>
+                                                        </label>
+                                                        <span class="governance-status-label"
+                                                            x-text="rule.enabled_label"></span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="governance-rule-result">
+                                                        <strong x-text="rule.last_run_label"></strong>
+                                                        <span x-text="rule.last_result_label"></span>
+                                                        <template x-if="rule.last_error">
+                                                            <span class="governance-table-error"
+                                                                x-text="rule.last_error"></span>
+                                                        </template>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <strong x-text="rule.total_deleted_count"></strong>
+                                                </td>
+                                                <td>
+                                                    <div class="governance-rule-actions">
+                                                        <button class="governance-inline-action" :data-rule-id="rule.id"
+                                                            @click="startEditingCleanupRuleByEvent">编辑</button>
+                                                        <button
+                                                            class="governance-inline-action governance-inline-action-primary"
+                                                            :data-rule-id="rule.id" @click="runCleanupRuleByEvent"
+                                                            x-text="rule.run_action_label"></button>
+                                                        <button
+                                                            class="governance-inline-action governance-inline-action-icon"
+                                                            :data-rule-id="rule.id" @click="deleteCleanupRuleByEvent"
+                                                            title="删除规则" aria-label="删除规则">
+                                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                                                stroke="currentColor" stroke-width="2"
+                                                                stroke-linecap="round" stroke-linejoin="round"
+                                                                aria-hidden="true">
+                                                                <path d="M3 6h18" />
+                                                                <path d="M8 6V4h8v2" />
+                                                                <path d="M19 6l-1 14H6L5 6" />
+                                                                <path d="M10 11v6" />
+                                                                <path d="M14 11v6" />
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </template>
+                </section>
+            </div>
+
+            <div class="governance-modal-backdrop" x-show="showGovernanceFormModal">
+                <div class="governance-modal-shell" @click.self="closeGovernanceFormModal">
+                    <section class="governance-modal">
+                        <div class="governance-modal-head">
+                            <div>
+                                <h3 x-text="governanceModalTitleLabel"></h3>
+                                <p x-text="governanceModalSubtitleLabel"></p>
+                            </div>
+                            <button class="btn btn-icon" @click="closeGovernanceFormModal" title="关闭规则表单">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="governance-form-grid governance-form-grid-modal">
+                            <label class="governance-field">
+                                <span>规则名称</span>
+                                <input type="text" :value="governanceForm.name" data-governance-field="name"
+                                    @input="updateGovernanceFormFieldByEvent" placeholder="例如：清理广告欢迎邮件" />
+                            </label>
+                            <label class="governance-field governance-switch-field">
+                                <span>启用规则</span>
+                                <input type="checkbox" :checked="governanceForm.enabled" data-governance-field="enabled"
+                                    @change="updateGovernanceFormFieldByEvent" />
+                            </label>
+                            <label class="governance-field">
+                                <span>收件人精确匹配</span>
+                                <input type="text" :value="governanceForm.recipient" data-governance-field="recipient"
+                                    @input="updateGovernanceFormFieldByEvent" placeholder="user@example.com" />
+                            </label>
+                            <label class="governance-field">
+                                <span>发件人包含</span>
+                                <input type="text" :value="governanceForm.sender_contains"
+                                    data-governance-field="sender_contains" @input="updateGovernanceFormFieldByEvent"
+                                    placeholder="newsletter@service.com" />
+                            </label>
+                            <label class="governance-field governance-field-span-2">
+                                <span>主题包含</span>
+                                <input type="text" :value="governanceForm.subject_contains"
+                                    data-governance-field="subject_contains" @input="updateGovernanceFormFieldByEvent"
+                                    placeholder="promotion / welcome / trial" />
+                            </label>
+                            <label class="governance-field governance-field-span-2">
+                                <span>备注</span>
+                                <textarea rows="4" :value="governanceForm.note" data-governance-field="note"
+                                    @input="updateGovernanceFormFieldByEvent"
+                                    placeholder="记录这条规则的适用场景，便于后续维护"></textarea>
+                            </label>
+                        </div>
+
+                        <div class="governance-preview" :class="governancePreviewClass">
+                            <span x-text="governancePreviewLabel"></span>
+                        </div>
+
+                        <div class="governance-modal-actions">
+                            <button class="btn btn-secondary" @click="closeGovernanceFormModal">取消</button>
+                            <button class="btn btn-secondary" @click="previewGovernanceRule"
+                                :disabled="governancePreviewLoading" x-text="governancePreviewButtonLabel"></button>
+                            <button class="btn btn-primary" @click="submitGovernanceRuleForm"
+                                :disabled="governanceFormSubmitting" x-text="governanceFormSubmitLabel"></button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </section>
+
         <section class="docs-panel" :class="docsPanelClass">
             <div class="docs-panel-header">
                 <div class="panel-title">
@@ -284,8 +560,7 @@
                                 <p x-text="docsError"></p>
                             </div>
                         </template>
-                        <div class="docs-panel-content" x-ref="docsRoot"
-                            :class="{ 'is-hidden': !showDocsContentState }"></div>
+                        <div class="docs-panel-content" x-ref="docsRoot" :class="docsContentClass"></div>
                     </div>
                 </div>
             </div>

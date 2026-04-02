@@ -225,6 +225,14 @@ body {
   overflow: auto;
 }
 
+.governance-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .docs-panel {
   display: flex;
   flex-direction: column;
@@ -607,6 +615,608 @@ body {
 .domains-table-checkbox {
   width: 44px;
   text-align: center !important;
+}
+
+.governance-panel-header {
+  align-items: flex-start;
+}
+
+.governance-panel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.governance-panel-body {
+  padding: 20px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 1px;
+  gap: 18px;
+  overflow: auto;
+}
+
+.governance-panel-body.is-loading {
+  opacity: 0.72;
+}
+
+.governance-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 24px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--bg-panel-solid) 97%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+
+.governance-section-retention {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-soft) 22%, transparent),
+      transparent 56%
+    ),
+    color-mix(in srgb, var(--bg-panel-solid) 97%, transparent);
+}
+
+.governance-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.governance-section-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.governance-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.governance-section-head h3 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.governance-section-head p {
+  max-width: 760px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.governance-section-head-rules {
+  align-items: center;
+}
+
+.governance-toggle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-panel-solid) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-light) 84%, transparent);
+}
+
+.governance-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.governance-toggle-copy strong {
+  font-size: 14px;
+}
+
+.governance-toggle-copy em {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.governance-toggle-control {
+  position: relative;
+  width: 54px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
+.governance-toggle-control input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.governance-toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  transition: background var(--transition);
+}
+
+.governance-toggle-thumb {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
+  transition:
+    transform var(--transition),
+    background var(--transition);
+}
+
+.governance-toggle-control input:checked + .governance-toggle-track {
+  background: color-mix(in srgb, var(--accent) 88%, transparent);
+}
+
+.governance-toggle-control input:checked + .governance-toggle-track + .governance-toggle-thumb {
+  transform: translateX(22px);
+}
+
+.governance-retention-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+  align-items: end;
+}
+
+.governance-retention-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 18px 24px;
+  align-items: start;
+}
+
+.governance-retention-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.governance-retention-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-light) 80%, transparent);
+}
+
+.governance-inline-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.governance-inline-field span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.governance-inline-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 0 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-panel-solid) 92%, transparent);
+}
+
+.governance-inline-input input[type='number'] {
+  width: 84px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 26px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.governance-inline-input strong {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.governance-retention-actions,
+.governance-modal-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.governance-status-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.governance-status-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.governance-error-inline {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.governance-rules-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.governance-rules-meta p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.governance-rules-empty {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0 4px;
+}
+
+.governance-rules-empty strong {
+  display: block;
+  font-size: 16px;
+}
+
+.governance-rules-empty p {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.governance-table-shell {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  padding-top: 14px;
+}
+
+.governance-table-wrap {
+  overflow-x: auto;
+}
+
+.governance-table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+}
+
+.governance-table th,
+.governance-table td {
+  padding: 16px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.governance-table th {
+  color: var(--text-muted);
+  font-weight: 700;
+  background: transparent;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.governance-table tbody tr:hover {
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+}
+
+.governance-rule-main,
+.governance-rule-result {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.governance-rule-main strong,
+.governance-rule-result strong {
+  font-size: 15px;
+}
+
+.governance-rule-id-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.governance-rule-main span,
+.governance-rule-matchers,
+.governance-rule-result span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.governance-rule-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.governance-table-error {
+  color: var(--warn-text) !important;
+}
+
+.governance-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.governance-inline-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.governance-inline-action:hover {
+  color: var(--text-main);
+}
+
+.governance-inline-action-primary {
+  color: var(--accent-strong);
+}
+
+.governance-inline-action-primary:hover {
+  color: var(--accent-hover);
+}
+
+.governance-inline-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--warn-text);
+  padding: 0;
+}
+
+.governance-inline-action-icon:hover {
+  border-color: color-mix(in srgb, var(--warn-text) 28%, transparent);
+  background: var(--warn-soft);
+  color: color-mix(in srgb, var(--warn-text) 84%, #000);
+}
+
+.governance-status-toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.governance-status-toggle input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.governance-status-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-strong) 86%, transparent);
+  transition: background var(--transition);
+}
+
+.governance-status-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+  transition:
+    transform var(--transition),
+    background var(--transition);
+}
+
+.governance-status-toggle input:checked + .governance-status-track {
+  background: color-mix(in srgb, var(--accent) 86%, transparent);
+}
+
+.governance-status-toggle input:checked + .governance-status-track + .governance-status-thumb {
+  transform: translateX(18px);
+}
+
+.governance-status-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.governance-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.governance-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.governance-field span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.governance-form-grid-modal {
+  margin-top: 4px;
+}
+
+.governance-field input[type='text'],
+.governance-field input[type='number'],
+.governance-field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-main);
+}
+
+.governance-field textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.governance-field input[type='number']:focus,
+.governance-field input[type='text']:focus,
+.governance-field textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.governance-switch-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.governance-switch-field span {
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.governance-switch-field input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.governance-field-span-2 {
+  grid-column: 1 / -1;
+}
+
+.governance-preview {
+  padding: 12px 14px;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.governance-preview.success {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.governance-preview.error {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.governance-empty {
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+.governance-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 20px;
+}
+
+.governance-modal-shell {
+  width: min(880px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+}
+
+.governance-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: calc(100vh - 40px);
+  padding: 22px 24px;
+  border: 1px solid var(--border-light);
+  border-radius: calc(var(--radius-xl) + 4px);
+  background: color-mix(in srgb, var(--bg-panel-solid) 98%, transparent);
+  box-shadow: var(--shadow-lg);
+  overflow: auto;
+}
+
+.governance-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.governance-modal-head h3 {
+  font-size: 22px;
+  margin-bottom: 8px;
+}
+
+.governance-modal-head p {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 /* Main Workspace (Dual Pane) */
@@ -1126,6 +1736,11 @@ body {
   color: var(--text-muted);
 }
 
+.chip-red {
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
 /* Mobile Drawer / Stack Layout */
 @media (max-width: 960px) {
   .tabs-nav {
@@ -1166,6 +1781,44 @@ body {
 
   .docs-panel-actions .btn {
     flex: 1 1 180px;
+  }
+
+  .governance-panel-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .governance-panel-actions .btn,
+  .governance-retention-actions .btn,
+  .governance-modal-actions .btn {
+    flex: 1 1 180px;
+  }
+
+  .governance-retention-controls,
+  .governance-rules-empty {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .governance-retention-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .governance-section-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .governance-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .governance-field-span-2 {
+    grid-column: auto;
+  }
+
+  .governance-rule-actions {
+    align-items: flex-start;
   }
 
   .domains-controls-row {
@@ -1298,6 +1951,7 @@ body {
   .domains-manager-header .panel-title,
   .domains-manager-actions,
   .docs-panel-actions,
+  .governance-panel-actions,
   .generated-address-card-inline {
     flex-basis: 100%;
     min-width: 0;
@@ -1309,6 +1963,31 @@ body {
 
   .docs-panel-scroll {
     padding: 12px 8px 18px 4px;
+  }
+
+  .governance-panel-body {
+    padding: 16px;
+  }
+
+  .governance-section,
+  .governance-modal {
+    padding: 16px;
+  }
+
+  .governance-section-head,
+  .governance-modal-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .governance-table th,
+  .governance-table td {
+    padding: 10px 12px;
+  }
+
+  .governance-modal-shell {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
   }
 
   .domains-manager-actions {

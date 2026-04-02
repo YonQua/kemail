@@ -1,6 +1,10 @@
 import { ANALYSIS_CACHE_TTL } from './constants.js'
 import { analysisCacheHeaders, jsonResponse } from './http.js'
 import {
+  GovernanceTablesMissingError,
+  readEffectiveRetentionDays,
+} from './mail-governance-store.js'
+import {
   buildUtcDayRange,
   readCurrentMailboxSummary,
   readHistoricalSummary,
@@ -63,7 +67,18 @@ export async function handleAnalysisSummaryRequest(url, env, path) {
   try {
     return await respondWithAnalysisCache(path, url, async () => {
       const currentSummary = await readCurrentMailboxSummary(env)
-      const historyWindow = buildUtcDayRange(7)
+      let effectiveRetentionDays = -1
+      try {
+        effectiveRetentionDays = await readEffectiveRetentionDays(env)
+      } catch (error) {
+        if (!(error instanceof GovernanceTablesMissingError)) {
+          throw error
+        }
+      }
+      const historyWindow = buildUtcDayRange(
+        7,
+        effectiveRetentionDays >= 0 ? effectiveRetentionDays : undefined
+      )
       const historicalSummary = await readHistoricalSummary(env, {
         todayDay: historyWindow.todayDay,
         startDay: historyWindow.startDay,

@@ -18,6 +18,7 @@
   "scripts": {
     "build:manage": "node scripts/build-manage-assets.mjs",
     "dev": "npm run build:manage && wrangler dev",
+    "dev:scheduled": "npm run build:manage && wrangler dev --test-scheduled",
     "deploy": "npm run build:manage && wrangler deploy",
     "tail": "wrangler tail",
     "verify:predeploy": "npm run build:manage && HOME=/tmp XDG_CONFIG_HOME=/tmp wrangler deploy --dry-run"

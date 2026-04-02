@@ -46,6 +46,12 @@
       "description": "域名池同步、启停和发号接口，主要供后台运维与域名池治理使用。",
       "x-title": "后台管理接口 · 域名池管理",
       "x-kicker": "Admin Domain Pool"
+    },
+    {
+      "name": "admin-governance",
+      "description": "邮件治理配置与广告邮件自动清理规则，主要供管理员配置保留策略、预览命中和手工/定时执行清理。",
+      "x-title": "后台管理接口 · 邮件治理",
+      "x-kicker": "Admin Governance"
     }
   ],
   "x-docs": {
@@ -400,6 +406,130 @@
           }
         },
         "required": ["ok", "version", "release_tag"]
+      },
+      "GovernanceSettings": {
+        "type": "object",
+        "properties": {
+          "retention_enabled": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "retention_days": {
+            "type": "integer"
+          },
+          "retention_last_run_at": {
+            "type": "string"
+          },
+          "retention_last_deleted_count": {
+            "type": "integer"
+          },
+          "retention_last_error": {
+            "type": "string"
+          },
+          "rules_last_run_at": {
+            "type": "string"
+          },
+          "rules_last_deleted_count": {
+            "type": "integer"
+          },
+          "rules_last_rule_count": {
+            "type": "integer"
+          },
+          "rules_last_error": {
+            "type": "string"
+          },
+          "scheduled_last_run_at": {
+            "type": "string"
+          },
+          "scheduled_last_error": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "retention_enabled",
+          "retention_days",
+          "retention_last_run_at",
+          "retention_last_deleted_count",
+          "retention_last_error",
+          "rules_last_run_at",
+          "rules_last_deleted_count",
+          "rules_last_rule_count",
+          "rules_last_error",
+          "scheduled_last_run_at",
+          "scheduled_last_error",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "CleanupRule": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "integer",
+            "enum": [0, 1]
+          },
+          "recipient": {
+            "type": "string"
+          },
+          "sender_contains": {
+            "type": "string"
+          },
+          "subject_contains": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "last_run_at": {
+            "type": "string"
+          },
+          "last_match_count": {
+            "type": "integer"
+          },
+          "last_deleted_count": {
+            "type": "integer"
+          },
+          "total_deleted_count": {
+            "type": "integer"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "enabled",
+          "recipient",
+          "sender_contains",
+          "subject_contains",
+          "note",
+          "last_run_at",
+          "last_match_count",
+          "last_deleted_count",
+          "total_deleted_count",
+          "last_error",
+          "created_at",
+          "updated_at"
+        ]
       }
     }
   },
@@ -1436,6 +1566,562 @@
           },
           "401": {
             "description": "未提供或提供了错误的 API Key"
+          }
+        }
+      }
+    },
+    "/api/admin/governance/settings": {
+      "get": {
+        "tags": ["admin-governance"],
+        "summary": "读取邮件治理设置",
+        "description": "返回当前旧邮件保留策略与最近一次治理执行状态字段。此接口是管理页邮件治理模块的基础设置入口。",
+        "operationId": "getGovernanceSettings",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 10,
+        "responses": {
+          "200": {
+            "description": "成功返回治理设置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "settings": {
+                      "$ref": "#/components/schemas/GovernanceSettings"
+                    }
+                  },
+                  "required": ["ok", "settings"]
+                },
+                "example": {
+                  "ok": true,
+                  "settings": {
+                    "retention_enabled": 1,
+                    "retention_days": 3,
+                    "retention_last_run_at": "2026-04-01T03:00:00.000Z",
+                    "retention_last_deleted_count": 18,
+                    "retention_last_error": "",
+                    "rules_last_run_at": "2026-04-01T03:00:00.000Z",
+                    "rules_last_deleted_count": 12,
+                    "rules_last_rule_count": 2,
+                    "rules_last_error": "",
+                    "scheduled_last_run_at": "2026-04-01T03:00:00.000Z",
+                    "scheduled_last_error": "",
+                    "created_at": "2026-03-31T12:00:00.000Z",
+                    "updated_at": "2026-04-01T03:00:00.000Z"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      },
+      "put": {
+        "tags": ["admin-governance"],
+        "summary": "更新邮件治理设置",
+        "description": "更新旧邮件保留策略。`retention_enabled=0` 表示暂停按保留天数自动清理，但保留天数字段本身仍会保存。",
+        "operationId": "updateGovernanceSettings",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 20,
+        "requestBody": {
+          "required": true,
+          "description": "要更新的治理设置字段。",
+          "content": {
+            "application/json": {
+              "example": {
+                "retention_enabled": 1,
+                "retention_days": 7
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "settings": {
+                      "$ref": "#/components/schemas/GovernanceSettings"
+                    }
+                  },
+                  "required": ["ok", "settings"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON，或字段值不合法"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/governance/status": {
+      "get": {
+        "tags": ["admin-governance"],
+        "summary": "读取邮件治理状态摘要",
+        "description": "返回治理设置拆分后的 retention / rules / scheduled 状态摘要，以及当前规则总数和启用数量。",
+        "operationId": "getGovernanceStatus",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 30,
+        "responses": {
+          "200": {
+            "description": "成功返回治理状态摘要",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "status": {
+                    "retention": {
+                      "enabled": 1,
+                      "retention_days": 7,
+                      "last_run_at": "2026-04-01T03:00:00.000Z",
+                      "last_deleted_count": 18,
+                      "last_error": ""
+                    },
+                    "rules": {
+                      "total_rules": 3,
+                      "enabled_rules": 2,
+                      "last_run_at": "2026-04-01T03:00:00.000Z",
+                      "last_deleted_count": 12,
+                      "last_rule_count": 2,
+                      "last_error": ""
+                    },
+                    "scheduled": {
+                      "last_run_at": "2026-04-01T03:00:00.000Z",
+                      "last_error": ""
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/governance/retention/run": {
+      "post": {
+        "tags": ["admin-governance"],
+        "summary": "立即执行一次旧邮件保留清理",
+        "description": "使用当前治理设置中的 `retention_enabled` 与 `retention_days` 立即执行一次旧邮件保留清理，便于在管理页手工验证。",
+        "operationId": "runGovernanceRetentionCleanup",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 40,
+        "responses": {
+          "200": {
+            "description": "执行成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "result": {
+                    "triggered_at": "2026-04-01T03:10:00.000Z",
+                    "retention_enabled": 1,
+                    "retention_days": 7,
+                    "cutoff_iso": "2026-03-25T03:10:00.000Z",
+                    "deleted_count": 18,
+                    "skipped": false
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/cleanup-rules": {
+      "get": {
+        "tags": ["admin-governance"],
+        "summary": "读取广告邮件清理规则列表",
+        "description": "返回当前所有广告邮件清理规则，管理页会据此渲染规则列表与最近执行状态。",
+        "operationId": "listCleanupRules",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 50,
+        "responses": {
+          "200": {
+            "description": "成功返回规则列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "rules": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CleanupRule"
+                      }
+                    }
+                  },
+                  "required": ["ok", "rules"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      },
+      "post": {
+        "tags": ["admin-governance"],
+        "summary": "新增广告邮件清理规则",
+        "description": "新增一条广告邮件清理规则。至少要提供 `recipient`、`sender_contains`、`subject_contains` 中的一项。",
+        "operationId": "createCleanupRule",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 60,
+        "requestBody": {
+          "required": true,
+          "description": "规则名称、启停状态与匹配条件。",
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "清理 Quora Digest",
+                "enabled": 1,
+                "recipient": "",
+                "sender_contains": "quora",
+                "subject_contains": "digest",
+                "note": "广告类周报"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "创建成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "rule": {
+                      "$ref": "#/components/schemas/CleanupRule"
+                    }
+                  },
+                  "required": ["ok", "rule"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON、缺少 name 或未提供任何匹配条件"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/cleanup-rules/preview": {
+      "post": {
+        "tags": ["admin-governance"],
+        "summary": "预览规则命中数量",
+        "description": "基于未保存或已编辑的规则条件，返回当前会命中的候选邮件数量，默认自动排除星标邮件。",
+        "operationId": "previewCleanupRule",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 70,
+        "requestBody": {
+          "required": true,
+          "description": "与保存规则相同的匹配条件。",
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "预览 Quora Digest",
+                "enabled": 1,
+                "sender_contains": "quora",
+                "subject_contains": "digest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功返回命中数量",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "preview": {
+                    "match_count": 24
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON，或未提供任何匹配条件"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/cleanup-rules/run": {
+      "post": {
+        "tags": ["admin-governance"],
+        "summary": "立即执行全部启用规则",
+        "description": "顺序执行全部启用的广告邮件清理规则，并返回本次执行的删除汇总与逐条结果。",
+        "operationId": "runCleanupRules",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 80,
+        "responses": {
+          "200": {
+            "description": "执行成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "result": {
+                    "triggered_at": "2026-04-01T03:12:00.000Z",
+                    "rule_count": 2,
+                    "deleted_count": 12,
+                    "errors": [],
+                    "results": [
+                      {
+                        "rule_id": 3,
+                        "rule_name": "清理 Quora Digest",
+                        "match_count": 12,
+                        "deleted_count": 12,
+                        "triggered_at": "2026-04-01T03:12:00.000Z",
+                        "skipped": false,
+                        "error": ""
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/cleanup-rules/{rule_id}": {
+      "put": {
+        "tags": ["admin-governance"],
+        "summary": "更新单条广告邮件清理规则",
+        "description": "按 id 更新单条广告邮件清理规则。更新后的规则仍必须保留至少一个匹配条件。",
+        "operationId": "updateCleanupRule",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 90,
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "description": "规则 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 3
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "需要更新的规则字段。",
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "清理 Quora Digest",
+                "enabled": 1,
+                "sender_contains": "quora",
+                "subject_contains": "digest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "rule": {
+                      "$ref": "#/components/schemas/CleanupRule"
+                    }
+                  },
+                  "required": ["ok", "rule"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体不是合法 JSON，或更新后规则不合法"
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "rule_id 不存在"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["admin-governance"],
+        "summary": "删除单条广告邮件清理规则",
+        "description": "按 id 删除单条广告邮件清理规则。",
+        "operationId": "deleteCleanupRule",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 100,
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "description": "规则 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "deleted": "3"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "rule_id 不存在"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
+          }
+        }
+      }
+    },
+    "/api/admin/cleanup-rules/{rule_id}/run": {
+      "post": {
+        "tags": ["admin-governance"],
+        "summary": "立即执行单条广告邮件清理规则",
+        "description": "按 id 立即执行单条广告邮件清理规则，并返回该条规则本次命中与删除结果。",
+        "operationId": "runCleanupRule",
+        "x-permission": "admin",
+        "x-scope": "admin",
+        "x-order": 110,
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "description": "规则 ID。",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "执行成功",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "result": {
+                    "rule_id": 3,
+                    "rule_name": "清理 Quora Digest",
+                    "match_count": 12,
+                    "deleted_count": 12,
+                    "triggered_at": "2026-04-01T03:12:00.000Z",
+                    "skipped": false,
+                    "error": ""
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "当前密钥不是管理员密钥"
+          },
+          "404": {
+            "description": "rule_id 不存在"
+          },
+          "503": {
+            "description": "治理相关 D1 表尚未创建"
           }
         }
       }

@@ -365,6 +365,11 @@ export async function invalidateRichDetailCache(env, emailId) {
   cache.delete(richDetailCacheKey(emailId))
 }
 
+export async function clearRichDetailMemoryCache(env) {
+  const cache = getRichDetailMemoryCache(env)
+  cache.clear()
+}
+
 export async function buildEmailDetail(env, row, options = {}) {
   if (!row || typeof row !== 'object') return null
 

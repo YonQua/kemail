@@ -19,6 +19,152 @@ const AVATAR_TONE_CLASSES = [
 const ACTION_LINK_PREVIEW_LIMIT = 6
 const ACTION_LINK_KEEP_LIMIT = 10
 const ACTION_LINK_MIN_SCORE = 6
+const GOVERNANCE_REFRESH_INTERVAL_MS = 20 * 1000
+const DEFAULT_GOVERNANCE_RETENTION_DAYS = 3
+
+function createDefaultGovernanceSettings() {
+  return {
+    retention_enabled: true,
+    retention_days: DEFAULT_GOVERNANCE_RETENTION_DAYS,
+  }
+}
+
+function createDefaultGovernanceStatus() {
+  return {
+    retention: {
+      enabled: 1,
+      retention_days: DEFAULT_GOVERNANCE_RETENTION_DAYS,
+      last_run_at: '',
+      last_deleted_count: 0,
+      last_error: '',
+    },
+    rules: {
+      total_rules: 0,
+      enabled_rules: 0,
+      last_run_at: '',
+      last_deleted_count: 0,
+      last_rule_count: 0,
+      last_error: '',
+    },
+    scheduled: {
+      last_run_at: '',
+      last_error: '',
+    },
+  }
+}
+
+function createEmptyCleanupRuleDraft() {
+  return {
+    id: 0,
+    name: '',
+    enabled: true,
+    recipient: '',
+    sender_contains: '',
+    subject_contains: '',
+    note: '',
+  }
+}
+
+function toPositiveInt(value, fallback = 0) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function normalizeGovernanceSettings(settings = {}) {
+  return {
+    retention_enabled: !(
+      settings?.retention_enabled === 0 || settings?.retention_enabled === false
+    ),
+    retention_days: toPositiveInt(settings?.retention_days, DEFAULT_GOVERNANCE_RETENTION_DAYS),
+  }
+}
+
+function normalizeGovernanceStatus(status = {}, settings = createDefaultGovernanceSettings()) {
+  return {
+    retention: {
+      enabled:
+        status?.retention?.enabled === 0 || status?.retention?.enabled === false
+          ? 0
+          : settings.retention_enabled
+            ? 1
+            : 0,
+      retention_days: toPositiveInt(
+        status?.retention?.retention_days,
+        settings.retention_days || DEFAULT_GOVERNANCE_RETENTION_DAYS
+      ),
+      last_run_at: String(status?.retention?.last_run_at || ''),
+      last_deleted_count: Number(status?.retention?.last_deleted_count || 0),
+      last_error: String(status?.retention?.last_error || ''),
+    },
+    rules: {
+      total_rules: Number(status?.rules?.total_rules || 0),
+      enabled_rules: Number(status?.rules?.enabled_rules || 0),
+      last_run_at: String(status?.rules?.last_run_at || ''),
+      last_deleted_count: Number(status?.rules?.last_deleted_count || 0),
+      last_rule_count: Number(status?.rules?.last_rule_count || 0),
+      last_error: String(status?.rules?.last_error || ''),
+    },
+    scheduled: {
+      last_run_at: String(status?.scheduled?.last_run_at || ''),
+      last_error: String(status?.scheduled?.last_error || ''),
+    },
+  }
+}
+
+function normalizeCleanupRuleDraft(rule = {}) {
+  return {
+    id: Number(rule?.id || 0),
+    name: String(rule?.name || ''),
+    enabled: !(rule?.enabled === 0 || rule?.enabled === false),
+    recipient: String(rule?.recipient || ''),
+    sender_contains: String(rule?.sender_contains || ''),
+    subject_contains: String(rule?.subject_contains || ''),
+    note: String(rule?.note || ''),
+  }
+}
+
+function normalizeCleanupRuleRecord(rule = {}) {
+  const draft = normalizeCleanupRuleDraft(rule)
+  return {
+    ...draft,
+    enabled: draft.enabled ? 1 : 0,
+    last_run_at: String(rule?.last_run_at || ''),
+    last_match_count: Number(rule?.last_match_count || 0),
+    last_deleted_count: Number(rule?.last_deleted_count || 0),
+    total_deleted_count: Number(rule?.total_deleted_count || 0),
+    last_error: String(rule?.last_error || ''),
+    created_at: String(rule?.created_at || ''),
+    updated_at: String(rule?.updated_at || ''),
+  }
+}
+
+function buildCleanupRulePayload(rule = {}) {
+  const draft = normalizeCleanupRuleDraft(rule)
+  return {
+    name: draft.name.trim(),
+    enabled: draft.enabled ? 1 : 0,
+    recipient: draft.recipient.trim(),
+    sender_contains: draft.sender_contains.trim(),
+    subject_contains: draft.subject_contains.trim(),
+    note: draft.note.trim(),
+  }
+}
+
+function buildCleanupRuleMatcherSummary(rule = {}) {
+  const payload = buildCleanupRulePayload(rule)
+  const parts = []
+  if (payload.recipient) parts.push(`收件人 = ${payload.recipient}`)
+  if (payload.sender_contains) parts.push(`发件人包含 \"${payload.sender_contains}\"`)
+  if (payload.subject_contains) parts.push(`主题包含 \"${payload.subject_contains}\"`)
+  return parts.length ? parts.join(' · ') : '未设置匹配条件'
+}
+
+function isGovernanceMigrationError(error) {
+  return (
+    error?.code === 'GOVERNANCE_MIGRATION_REQUIRED' ||
+    String(error?.message || '').includes('Governance tables missing')
+  )
+}
 
 function buildApiError(response, data, text) {
   const error = new Error(
@@ -216,7 +362,7 @@ function createMailAppState() {
     globalNoticeTimer: null,
 
     // Dashboard & layout State
-    activeTab: 'inbox', // 'inbox' | 'dashboard' | 'domains' | 'docs'
+    activeTab: 'inbox', // 'inbox' | 'dashboard' | 'domains' | 'governance' | 'docs'
     isMobileDrawerOpen: false,
 
     // Data State
@@ -259,6 +405,27 @@ function createMailAppState() {
     },
     docsRenderedMode: '',
     docsRequestToken: 0,
+    governanceLoaded: false,
+    governanceLoading: false,
+    governanceNeedsRefresh: false,
+    governanceLastLoadedAt: 0,
+    governanceMigrationRequired: false,
+    governanceSettings: createDefaultGovernanceSettings(),
+    governanceStatus: createDefaultGovernanceStatus(),
+    cleanupRules: [],
+    governanceSettingsSaving: false,
+    governanceRetentionRunning: false,
+    governanceRulesRunning: false,
+    governanceRuleActionId: 0,
+    governanceRuleActionType: '',
+    governanceFormOpen: false,
+    governanceFormMode: 'create',
+    governanceForm: createEmptyCleanupRuleDraft(),
+    governanceFormSubmitting: false,
+    governancePreviewLoading: false,
+    governancePreviewRequested: false,
+    governancePreviewMatchCount: null,
+    governancePreviewError: '',
 
     // List Query State
     searchAddress: '',
@@ -287,6 +454,31 @@ function createMailAppState() {
 
     init() {
       this.authInput = ''
+      this.resetGovernanceState()
+    },
+
+    resetGovernanceState() {
+      this.governanceLoaded = false
+      this.governanceLoading = false
+      this.governanceNeedsRefresh = false
+      this.governanceLastLoadedAt = 0
+      this.governanceMigrationRequired = false
+      this.governanceSettings = createDefaultGovernanceSettings()
+      this.governanceStatus = createDefaultGovernanceStatus()
+      this.cleanupRules = []
+      this.governanceSettingsSaving = false
+      this.governanceRetentionRunning = false
+      this.governanceRulesRunning = false
+      this.governanceRuleActionId = 0
+      this.governanceRuleActionType = ''
+      this.governanceFormOpen = false
+      this.governanceFormMode = 'create'
+      this.governanceForm = createEmptyCleanupRuleDraft()
+      this.governanceFormSubmitting = false
+      this.governancePreviewLoading = false
+      this.governancePreviewRequested = false
+      this.governancePreviewMatchCount = null
+      this.governancePreviewError = ''
     },
 
     // --- Authentication --- //
@@ -360,6 +552,7 @@ function createMailAppState() {
       this.docsSpecs = { public: null, admin: null }
       this.docsRenderedMode = ''
       this.docsRequestToken += 1
+      this.resetGovernanceState()
       this.activeTab = 'inbox'
       this.activeMail = null
       this.activeMailDetail = null
@@ -575,9 +768,10 @@ function createMailAppState() {
       this.fetchMails()
       if (this.canUseAdminActions) {
         this.fetchManagedDomains({ silentForbidden: true })
+        this.fetchGovernanceData({ force: false, showNotice: false })
       } else {
         this.managedDomains = []
-        if (this.activeTab === 'domains') {
+        if (this.activeTab === 'domains' || this.activeTab === 'governance') {
           this.activeTab = 'inbox'
         }
       }
@@ -630,7 +824,7 @@ function createMailAppState() {
     },
 
     switchTab(nextTab) {
-      if (nextTab === 'domains' && !this.canUseAdminActions) {
+      if ((nextTab === 'domains' || nextTab === 'governance') && !this.canUseAdminActions) {
         nextTab = 'inbox'
       }
       this.activeTab = nextTab
@@ -683,6 +877,10 @@ function createMailAppState() {
       return this.activeTab === 'domains'
     },
 
+    get isGovernanceTab() {
+      return this.activeTab === 'governance'
+    },
+
     get isDocsTab() {
       return this.activeTab === 'docs'
     },
@@ -697,6 +895,10 @@ function createMailAppState() {
 
     get domainsPanelClass() {
       return { 'is-hidden': !this.isDomainsTab }
+    },
+
+    get governancePanelClass() {
+      return { 'is-hidden': !this.isGovernanceTab }
     },
 
     get docsPanelClass() {
@@ -719,6 +921,11 @@ function createMailAppState() {
       this.switchTab('domains')
     },
 
+    async showGovernanceTab() {
+      this.switchTab('governance')
+      await this.fetchGovernanceData({ force: false, showNotice: true })
+    },
+
     get inboxTabClass() {
       return { active: this.activeTab === 'inbox' }
     },
@@ -729,6 +936,10 @@ function createMailAppState() {
 
     get domainsTabClass() {
       return { active: this.activeTab === 'domains' }
+    },
+
+    get governanceTabClass() {
+      return { active: this.activeTab === 'governance' }
     },
 
     get docsTabClass() {
@@ -780,6 +991,656 @@ function createMailAppState() {
 
     get showDocsContentState() {
       return !this.docsLoading && !this.docsError && this.docsRenderedMode === this.docsMode
+    },
+
+    get docsContentClass() {
+      return this.showDocsContentState ? '' : 'is-hidden'
+    },
+
+    // --- Governance --- //
+
+    get governanceRetentionState() {
+      return this.governanceStatus?.retention || createDefaultGovernanceStatus().retention
+    },
+
+    get governanceRulesState() {
+      return this.governanceStatus?.rules || createDefaultGovernanceStatus().rules
+    },
+
+    get governanceScheduledState() {
+      return this.governanceStatus?.scheduled || createDefaultGovernanceStatus().scheduled
+    },
+
+    get showGovernanceMigrationState() {
+      return this.governanceMigrationRequired
+    },
+
+    get showGovernanceLoadingState() {
+      return !this.governanceMigrationRequired && this.governanceLoading && !this.governanceLoaded
+    },
+
+    get showGovernanceBodyState() {
+      return !this.governanceMigrationRequired
+    },
+
+    get showGovernanceFormModal() {
+      return this.governanceFormOpen
+    },
+
+    decorateCleanupRule(rule) {
+      const record = normalizeCleanupRuleRecord(rule)
+      const enabled = record.enabled ? 1 : 0
+      const lastRunAt = record.last_run_at
+      const lastError = String(record.last_error || '').trim()
+
+      return {
+        ...record,
+        id_label: `#${record.id}`,
+        enabled,
+        matcher_summary: buildCleanupRuleMatcherSummary(record),
+        last_run_at: lastRunAt,
+        last_run_label: lastRunAt ? this.formatDateFull(lastRunAt) : '未执行',
+        last_error: lastError,
+        note_label: record.note || '未填写备注',
+        last_result_label: `命中 ${record.last_match_count} · 删除 ${record.last_deleted_count}`,
+        enabled_label: enabled ? '已启用' : '已停用',
+        run_action_label: '执行规则',
+      }
+    },
+
+    setCleanupRules(rules) {
+      this.cleanupRules = (Array.isArray(rules) ? rules : []).map((rule) =>
+        this.decorateCleanupRule(rule)
+      )
+    },
+
+    findCleanupRuleById(id) {
+      return this.cleanupRules.find((rule) => rule.id === Number(id || 0)) || null
+    },
+
+    clearGovernancePreview() {
+      this.governancePreviewLoading = false
+      this.governancePreviewRequested = false
+      this.governancePreviewMatchCount = null
+      this.governancePreviewError = ''
+    },
+
+    markGovernanceDirty() {
+      this.governanceNeedsRefresh = true
+    },
+
+    consumeGovernanceError(error, options = {}) {
+      if (isGovernanceMigrationError(error)) {
+        this.governanceLoaded = true
+        this.governanceMigrationRequired = true
+        this.governanceSettings = createDefaultGovernanceSettings()
+        this.governanceStatus = createDefaultGovernanceStatus()
+        this.cleanupRules = []
+        if (options.showNotice) {
+          this.showError('邮件治理表尚未初始化，请先执行 README 中的 D1 migration SQL')
+        }
+        return true
+      }
+
+      if (String(error?.message || '') === 'Admin access required') {
+        this.adminAccessAvailable = false
+        this.resetGovernanceState()
+        if (this.activeTab === 'governance') {
+          this.activeTab = 'inbox'
+        }
+        if (options.showNotice !== false) {
+          this.showError(options.adminMessage || '当前密钥不支持邮件治理')
+        }
+        return true
+      }
+
+      return false
+    },
+
+    async fetchGovernanceData(options = {}) {
+      if (!this.canUseAdminActions) return
+      const force = options.force === true
+      const showNotice = options.showNotice === true
+      const shouldReuse =
+        !force &&
+        this.governanceLoaded &&
+        !this.governanceNeedsRefresh &&
+        Date.now() - Number(this.governanceLastLoadedAt || 0) < GOVERNANCE_REFRESH_INTERVAL_MS
+
+      if (shouldReuse || this.governanceLoading) return
+
+      this.governanceLoading = true
+      try {
+        const [settingsData, statusData, rulesData] = await Promise.all([
+          this.apiFetch('/api/admin/governance/settings'),
+          this.apiFetch('/api/admin/governance/status'),
+          this.apiFetch('/api/admin/cleanup-rules'),
+        ])
+
+        const settings = normalizeGovernanceSettings(settingsData?.settings || {})
+        this.governanceSettings = settings
+        this.governanceStatus = normalizeGovernanceStatus(statusData?.status || {}, settings)
+        this.setCleanupRules(rulesData?.rules || [])
+        this.governanceLoaded = true
+        this.governanceMigrationRequired = false
+        this.governanceNeedsRefresh = false
+        this.governanceLastLoadedAt = Date.now()
+      } catch (error) {
+        this.governanceLoaded = true
+        this.governanceLastLoadedAt = Date.now()
+        if (this.consumeGovernanceError(error, { showNotice })) return
+        if (showNotice) {
+          this.showError('邮件治理数据加载失败: ' + error.message)
+        }
+      } finally {
+        this.governanceLoading = false
+      }
+    },
+
+    async refreshGovernancePanel() {
+      await this.fetchGovernanceData({ force: true, showNotice: true })
+    },
+
+    setGovernanceRuleAction(ruleId, actionType) {
+      this.governanceRuleActionId = Number(ruleId || 0)
+      this.governanceRuleActionType = String(actionType || '')
+    },
+
+    clearGovernanceRuleAction() {
+      this.governanceRuleActionId = 0
+      this.governanceRuleActionType = ''
+    },
+
+    updateGovernanceRetentionEnabledByEvent(event) {
+      this.governanceSettings.retention_enabled = Boolean(event?.target?.checked)
+    },
+
+    updateGovernanceRetentionDaysByEvent(event) {
+      const rawValue = String(event?.target?.value ?? '').trim()
+      this.governanceSettings.retention_days = rawValue === '' ? '' : rawValue
+    },
+
+    updateGovernanceFormFieldByEvent(event) {
+      const fieldName = String(event?.target?.dataset?.governanceField || '')
+      if (!fieldName || !Object.prototype.hasOwnProperty.call(this.governanceForm, fieldName))
+        return
+
+      if (fieldName === 'enabled') {
+        this.governanceForm.enabled = Boolean(event?.target?.checked)
+      } else {
+        this.governanceForm[fieldName] = String(event?.target?.value ?? '')
+      }
+      this.clearGovernancePreview()
+    },
+
+    resolveCleanupRuleFromEvent(event) {
+      const ruleId = Number(
+        event?.currentTarget?.dataset?.ruleId || event?.target?.dataset?.ruleId || 0
+      )
+      return ruleId > 0 ? this.findCleanupRuleById(ruleId) : null
+    },
+
+    validateGovernanceRulePayload(payload, options = {}) {
+      const requireName = options.requireName !== false
+      if (requireName && !payload.name) {
+        return '请输入规则名称'
+      }
+      if (!payload.recipient && !payload.sender_contains && !payload.subject_contains) {
+        return '至少填写一个匹配条件'
+      }
+      return ''
+    },
+
+    openCreateGovernanceRuleForm() {
+      this.resetGovernanceForm()
+      this.governanceFormOpen = true
+    },
+
+    startEditingCleanupRule(rule) {
+      const target = typeof rule === 'number' ? this.findCleanupRuleById(rule) : rule
+      if (!target) return
+      this.governanceFormMode = 'edit'
+      this.governanceForm = normalizeCleanupRuleDraft(target)
+      this.governanceFormOpen = true
+      this.clearGovernancePreview()
+    },
+
+    startEditingCleanupRuleByEvent(event) {
+      const target = this.resolveCleanupRuleFromEvent(event)
+      if (!target) return
+      this.startEditingCleanupRule(target)
+    },
+
+    resetGovernanceForm() {
+      this.governanceFormMode = 'create'
+      this.governanceForm = createEmptyCleanupRuleDraft()
+      this.clearGovernancePreview()
+    },
+
+    closeGovernanceFormModal() {
+      if (this.governanceFormSubmitting) return
+      this.governanceFormOpen = false
+      this.resetGovernanceForm()
+    },
+
+    async syncGovernanceAffectedData(options = {}) {
+      this.markGovernanceDirty()
+      const tasks = []
+      if (options.refreshGovernance !== false) {
+        tasks.push(this.fetchGovernanceData({ force: true, showNotice: false }))
+      }
+      if (options.refreshMails !== false) {
+        tasks.push(this.fetchMails())
+      }
+      if (options.refreshStats !== false) {
+        tasks.push(this.refreshStatsAfterMutation())
+      }
+      await Promise.all(tasks)
+    },
+
+    async saveGovernanceSettings() {
+      if (!this.canUseAdminActions || this.governanceSettingsSaving) return
+
+      const retentionDays = toPositiveInt(
+        this.governanceSettings.retention_days,
+        DEFAULT_GOVERNANCE_RETENTION_DAYS
+      )
+      if (retentionDays < 1) {
+        this.showError('保留天数必须是大于 0 的整数')
+        return
+      }
+
+      this.governanceSettingsSaving = true
+      try {
+        const data = await this.apiFetch('/api/admin/governance/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            retention_enabled: this.governanceSettings.retention_enabled ? 1 : 0,
+            retention_days: retentionDays,
+          }),
+        })
+        this.governanceSettings = normalizeGovernanceSettings(data?.settings || {})
+        await Promise.all([
+          this.fetchGovernanceData({ force: true, showNotice: false }),
+          this.refreshStatsAfterMutation(),
+        ])
+        this.showSuccess('保留策略已保存')
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError('保留策略保存失败: ' + error.message)
+      } finally {
+        this.governanceSettingsSaving = false
+      }
+    },
+
+    async runRetentionCleanup() {
+      if (!this.canUseAdminActions || this.governanceRetentionRunning) return
+      if (!confirm('确定立即执行旧邮件保留清理吗？会删除超过保留天数的邮件。')) return
+
+      this.governanceRetentionRunning = true
+      try {
+        const data = await this.apiFetch('/api/admin/governance/retention/run', {
+          method: 'POST',
+        })
+        const result = data?.result || {}
+        await this.syncGovernanceAffectedData()
+        if (result?.skipped) {
+          this.showSuccess('旧邮件保留清理已执行，当前策略处于关闭状态')
+        } else {
+          this.showSuccess(`旧邮件保留清理完成，删除 ${result?.deleted_count || 0} 封邮件`)
+        }
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError('旧邮件保留清理失败: ' + error.message)
+      } finally {
+        this.governanceRetentionRunning = false
+      }
+    },
+
+    async previewGovernanceRule() {
+      if (!this.canUseAdminActions || this.governancePreviewLoading) return
+
+      const payload = buildCleanupRulePayload(this.governanceForm)
+      const validationError = this.validateGovernanceRulePayload(payload, { requireName: false })
+      this.governancePreviewRequested = true
+      this.governancePreviewMatchCount = null
+      this.governancePreviewError = validationError
+      if (validationError) return
+
+      this.governancePreviewLoading = true
+      try {
+        const data = await this.apiFetch('/api/admin/cleanup-rules/preview', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+        this.governancePreviewMatchCount = Number(data?.preview?.match_count || 0)
+        this.governancePreviewError = ''
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.governancePreviewMatchCount = null
+        this.governancePreviewError = error.message || '预览失败'
+      } finally {
+        this.governancePreviewLoading = false
+      }
+    },
+
+    async submitGovernanceRuleForm() {
+      if (!this.canUseAdminActions || this.governanceFormSubmitting) return
+
+      const payload = buildCleanupRulePayload(this.governanceForm)
+      const validationError = this.validateGovernanceRulePayload(payload)
+      if (validationError) {
+        this.governancePreviewRequested = true
+        this.governancePreviewMatchCount = null
+        this.governancePreviewError = validationError
+        this.showError(validationError)
+        return
+      }
+
+      const ruleId = Number(this.governanceForm.id || 0)
+      const isEdit = this.governanceFormMode === 'edit' && ruleId > 0
+      const requestPath = isEdit ? `/api/admin/cleanup-rules/${ruleId}` : '/api/admin/cleanup-rules'
+      const requestMethod = isEdit ? 'PUT' : 'POST'
+
+      this.governanceFormSubmitting = true
+      try {
+        await this.apiFetch(requestPath, {
+          method: requestMethod,
+          body: JSON.stringify(payload),
+        })
+        await this.fetchGovernanceData({ force: true, showNotice: false })
+        this.governanceFormOpen = false
+        this.resetGovernanceForm()
+        this.showSuccess(isEdit ? '清理规则已更新' : '清理规则已创建')
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError(`${isEdit ? '更新' : '创建'}清理规则失败: ${error.message}`)
+      } finally {
+        this.governanceFormSubmitting = false
+      }
+    },
+
+    async toggleCleanupRuleEnabled(rule) {
+      if (!this.canUseAdminActions) return
+      if (this.governanceRuleActionId) return
+      const target = this.findCleanupRuleById(rule?.id || 0) || rule
+      if (!target) return
+
+      const nextEnabled = target.enabled ? 0 : 1
+      this.setGovernanceRuleAction(target.id, 'toggle')
+      try {
+        await this.apiFetch(`/api/admin/cleanup-rules/${target.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled: nextEnabled,
+          }),
+        })
+        if (Number(this.governanceForm.id || 0) === target.id) {
+          this.governanceForm.enabled = Boolean(nextEnabled)
+        }
+        await this.fetchGovernanceData({ force: true, showNotice: false })
+        this.showSuccess(`规则已${nextEnabled ? '启用' : '停用'}`)
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError(`规则${nextEnabled ? '启用' : '停用'}失败: ${error.message}`)
+      } finally {
+        this.clearGovernanceRuleAction()
+      }
+    },
+
+    async toggleCleanupRuleEnabledByEvent(event) {
+      const target = this.resolveCleanupRuleFromEvent(event)
+      if (!target) return
+      await this.toggleCleanupRuleEnabled(target)
+    },
+
+    async deleteCleanupRule(rule) {
+      if (!this.canUseAdminActions) return
+      if (this.governanceRuleActionId) return
+      const target = this.findCleanupRuleById(rule?.id || 0) || rule
+      if (!target) return
+      if (!confirm(`确定删除规则“${target.name}”吗？`)) return
+
+      this.setGovernanceRuleAction(target.id, 'delete')
+      try {
+        await this.apiFetch(`/api/admin/cleanup-rules/${target.id}`, {
+          method: 'DELETE',
+        })
+        if (Number(this.governanceForm.id || 0) === target.id) {
+          this.resetGovernanceForm()
+        }
+        await this.fetchGovernanceData({ force: true, showNotice: false })
+        this.showSuccess('清理规则已删除')
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError('删除清理规则失败: ' + error.message)
+      } finally {
+        this.clearGovernanceRuleAction()
+      }
+    },
+
+    async deleteCleanupRuleByEvent(event) {
+      const target = this.resolveCleanupRuleFromEvent(event)
+      if (!target) return
+      await this.deleteCleanupRule(target)
+    },
+
+    async runCleanupRule(rule) {
+      if (!this.canUseAdminActions) return
+      if (this.governanceRuleActionId) return
+      const target = this.findCleanupRuleById(rule?.id || 0) || rule
+      if (!target) return
+      if (!confirm(`确定立即执行规则“${target.name}”吗？会删除命中的非星标邮件。`)) return
+
+      this.setGovernanceRuleAction(target.id, 'run')
+      try {
+        const data = await this.apiFetch(`/api/admin/cleanup-rules/${target.id}/run`, {
+          method: 'POST',
+        })
+        const result = data?.result || {}
+        await this.syncGovernanceAffectedData()
+        this.showSuccess(
+          `规则已执行，命中 ${result?.match_count || 0} 封，删除 ${result?.deleted_count || 0} 封`
+        )
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError('执行清理规则失败: ' + error.message)
+      } finally {
+        this.clearGovernanceRuleAction()
+      }
+    },
+
+    async runCleanupRuleByEvent(event) {
+      const target = this.resolveCleanupRuleFromEvent(event)
+      if (!target) return
+      await this.runCleanupRule(target)
+    },
+
+    async runAllCleanupRules() {
+      if (!this.canUseAdminActions || this.governanceRulesRunning) return
+      if (!this.hasEnabledCleanupRules) {
+        this.showError('当前没有启用中的清理规则')
+        return
+      }
+      if (!confirm('确定立即执行全部启用规则吗？会删除命中的非星标邮件。')) return
+
+      this.governanceRulesRunning = true
+      try {
+        const data = await this.apiFetch('/api/admin/cleanup-rules/run', {
+          method: 'POST',
+        })
+        const result = data?.result || {}
+        await this.syncGovernanceAffectedData()
+        const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0
+        const message = `已执行 ${result?.rule_count || 0} 条规则，删除 ${result?.deleted_count || 0} 封邮件`
+        if (errorCount > 0) {
+          this.showError(`${message}，其中 ${errorCount} 条执行失败`)
+        } else {
+          this.showSuccess(message)
+        }
+      } catch (error) {
+        if (this.consumeGovernanceError(error, { showNotice: true })) return
+        this.showError('执行全部规则失败: ' + error.message)
+      } finally {
+        this.governanceRulesRunning = false
+      }
+    },
+
+    get governanceSummaryLabel() {
+      if (this.governanceMigrationRequired) return '邮件治理表尚未初始化'
+      if (this.governanceLoading && !this.governanceLoaded) return '正在加载邮件治理配置...'
+      const rulesState = this.governanceRulesState
+      const totalRules = Number(rulesState.total_rules || this.cleanupRules.length || 0)
+      const enabledRules = Number(
+        rulesState.enabled_rules || this.cleanupRules.filter((rule) => rule.enabled).length
+      )
+      const retentionDays = Number(this.governanceSettings.retention_days || 0)
+      const retentionLabel = this.governanceSettings.retention_enabled
+        ? `保留 ${retentionDays} 天`
+        : '保留策略已关闭'
+      return `规则 ${enabledRules}/${totalRules} 启用 · ${retentionLabel}`
+    },
+
+    get governancePageTitleLabel() {
+      return '邮件治理'
+    },
+
+    get governancePageSubtitleLabel() {
+      return '邮件治理：统一管理旧邮件保留策略与广告/摘要邮件自动清理规则。'
+    },
+
+    get governanceRefreshButtonLabel() {
+      return this.governanceLoading ? '刷新中...' : '刷新治理数据'
+    },
+
+    get governanceSaveSettingsLabel() {
+      return this.governanceSettingsSaving ? '保存中...' : '保存保留策略'
+    },
+
+    get governanceRetentionRunLabel() {
+      return this.governanceRetentionRunning ? '执行中...' : '立即清理过期邮件'
+    },
+
+    get governanceFormSubmitLabel() {
+      if (this.governanceFormSubmitting) {
+        return this.governanceFormMode === 'edit' ? '保存中...' : '创建中...'
+      }
+      return this.governanceFormMode === 'edit' ? '保存规则' : '创建规则'
+    },
+
+    get governancePreviewButtonLabel() {
+      return this.governancePreviewLoading ? '预览中...' : '预览命中数'
+    },
+
+    get governancePreviewClass() {
+      return {
+        success: this.governancePreviewRequested && !this.governancePreviewError,
+        error: Boolean(this.governancePreviewError),
+      }
+    },
+
+    get governancePreviewLabel() {
+      if (this.governancePreviewLoading) return '正在计算命中数量...'
+      if (this.governancePreviewError) return `预览失败: ${this.governancePreviewError}`
+      if (this.governancePreviewRequested) {
+        return `预计命中 ${Number(this.governancePreviewMatchCount || 0)} 封非星标邮件`
+      }
+      return '保存前可先预览当前条件会命中多少封非星标邮件。'
+    },
+
+    get governanceRetentionStatusChipLabel() {
+      return this.governanceSettings.retention_enabled ? '已启用' : '已关闭'
+    },
+
+    get governanceRulesStatusChipClass() {
+      if (this.governanceRulesState.last_error) return 'chip-red'
+      if (this.hasEnabledCleanupRules) return 'chip-green'
+      return 'chip-gray'
+    },
+
+    get governanceRulesStatusChipLabel() {
+      if (this.governanceRulesState.last_error) return '部分失败'
+      if (this.hasEnabledCleanupRules) return '可执行'
+      return '暂无启用规则'
+    },
+
+    get governancePanelContentClass() {
+      return { 'is-loading': this.governanceLoading }
+    },
+
+    get governanceRetentionLastRunLabel() {
+      return this.governanceRetentionState.last_run_at
+        ? this.formatDateFull(this.governanceRetentionState.last_run_at)
+        : '未执行'
+    },
+
+    get governanceRulesLastRunLabel() {
+      return this.governanceRulesState.last_run_at
+        ? this.formatDateFull(this.governanceRulesState.last_run_at)
+        : '未执行'
+    },
+
+    get governanceScheduledLastRunLabel() {
+      return this.governanceScheduledState.last_run_at
+        ? this.formatDateFull(this.governanceScheduledState.last_run_at)
+        : '未执行'
+    },
+
+    get governanceRetentionExecutionSummary() {
+      if (!this.governanceRetentionState.last_run_at) {
+        return '旧邮件保留清理尚未手工执行；系统会继续按已配置的 cron 调度运行。'
+      }
+      return `最近一次旧邮件保留清理于 ${this.governanceRetentionLastRunLabel} 执行，删除 ${this.governanceRetentionState.last_deleted_count} 封过期邮件。`
+    },
+
+    get governanceScheduledExecutionSummary() {
+      if (!this.governanceScheduledState.last_run_at) {
+        return 'scheduled() 还没有留下执行记录。'
+      }
+      return `系统最近一次调度于 ${this.governanceScheduledLastRunLabel} 执行。`
+    },
+
+    get governanceRulesExecutionSummary() {
+      if (!this.governanceRulesState.last_run_at) {
+        return `当前共 ${this.governanceRulesState.total_rules} 条规则，启用 ${this.governanceRulesState.enabled_rules} 条。`
+      }
+      return `最近一轮规则批量执行于 ${this.governanceRulesLastRunLabel} 完成，执行 ${this.governanceRulesState.last_rule_count} 条规则，删除 ${this.governanceRulesState.last_deleted_count} 封邮件。`
+    },
+
+    get governanceRulesCountLabel() {
+      return `共 ${this.governanceRulesState.total_rules} 条规则，启用 ${this.governanceRulesState.enabled_rules} 条。`
+    },
+
+    get showGovernanceRulesEmpty() {
+      return !this.governanceLoading && !this.cleanupRules.length
+    },
+
+    get showGovernanceRulesTable() {
+      return !this.showGovernanceRulesEmpty
+    },
+
+    get hasEnabledCleanupRules() {
+      return this.cleanupRules.some((rule) => rule.enabled)
+    },
+
+    get governanceRunAllRulesDisabled() {
+      return this.governanceLoading || this.governanceRulesRunning || !this.hasEnabledCleanupRules
+    },
+
+    get runAllCleanupRulesLabel() {
+      return this.governanceRulesRunning ? '执行中...' : '执行全部启用规则'
+    },
+
+    get governanceOpenRuleModalLabel() {
+      return '新增规则'
+    },
+
+    get governanceModalTitleLabel() {
+      return this.governanceFormMode === 'edit' ? '编辑清理规则' : '新增清理规则'
+    },
+
+    get governanceModalSubtitleLabel() {
+      return '匹配条件按 AND 组合，系统自动跳过星标邮件。保存前可先预览命中数量。'
     },
 
     renderCharts(trendSeries, sendersList) {

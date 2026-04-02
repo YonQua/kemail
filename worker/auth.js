@@ -124,12 +124,26 @@ export async function checkRateLimit(request, env, scope = 'api') {
 export function authenticatedRateLimitPolicy(request, url, path) {
   const method = request.method
   const isAnalysisPath = path.startsWith('/api/analysis/')
+  const isGovernanceReadPath =
+    path === '/api/admin/governance/settings' ||
+    path === '/api/admin/governance/status' ||
+    path === '/api/admin/cleanup-rules' ||
+    path === '/api/admin/cleanup-rules/preview' ||
+    /^\/api\/admin\/cleanup-rules\/\d+$/.test(path)
+  const isGovernanceWritePath =
+    path === '/api/admin/governance/settings' ||
+    path === '/api/admin/governance/retention/run' ||
+    path === '/api/admin/cleanup-rules' ||
+    path === '/api/admin/cleanup-rules/run' ||
+    /^\/api\/admin\/cleanup-rules\/\d+$/.test(path) ||
+    /^\/api\/admin\/cleanup-rules\/\d+\/run$/.test(path)
   const isWritePath =
     method === 'DELETE' ||
     path === '/api/latest/consume' ||
     path === '/api/emails/delete' ||
     path === '/api/emails/read' ||
-    path === '/api/emails/star'
+    path === '/api/emails/star' ||
+    (isGovernanceWritePath && method !== 'GET')
   const isRichPath =
     /^\/api\/emails\/\d+\/source$/.test(path) ||
     (/^\/api\/emails\/\d+$/.test(path) && url.searchParams.get('rich') === '1')
@@ -157,6 +171,15 @@ export function authenticatedRateLimitPolicy(request, url, path) {
       scope: 'authorized-write',
       limit: WRITE_RATE_LIMIT,
       windowSeconds: WRITE_RATE_WINDOW,
+      storage: 'memory',
+    }
+  }
+
+  if (isGovernanceReadPath) {
+    return {
+      scope: 'authorized-read',
+      limit: AUTH_RATE_LIMIT,
+      windowSeconds: AUTH_RATE_WINDOW,
       storage: 'memory',
     }
   }
