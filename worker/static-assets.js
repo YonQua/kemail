@@ -3,7 +3,6 @@ import {
   getStaticAssetHeaders,
   jsonResponse,
   methodNotAllowed,
-  resolveManagedAssetFallbackPath,
   resolveStaticAssetPath,
 } from './http.js'
 
@@ -24,23 +23,7 @@ export async function handleStaticAssetRequest(request, env) {
   const url = new URL(request.url)
   const assetUrl = new URL(request.url)
   assetUrl.pathname = resolveStaticAssetPath(url.pathname)
-
-  const response = await fetchStaticAssetByPath(request, env, assetUrl.pathname, assetUrl.pathname)
-  if (response.status === 404) {
-    const fallbackPath = resolveManagedAssetFallbackPath(assetUrl.pathname)
-    if (fallbackPath) {
-      const fallbackResponse = await fetchStaticAssetByPath(
-        request,
-        env,
-        fallbackPath,
-        fallbackPath
-      )
-      if (fallbackResponse.status !== 404) {
-        return fallbackResponse
-      }
-    }
-  }
-  return response
+  return fetchStaticAssetByPath(request, env, assetUrl.pathname, assetUrl.pathname)
 }
 
 export async function handleStaticDocumentRequest(request, env) {

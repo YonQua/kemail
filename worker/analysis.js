@@ -11,7 +11,7 @@ import {
   readHistoricalTopSenders,
   readHistoricalTrend,
 } from './metrics-store.js'
-import { parseEmailLimit } from './query.js'
+import { parseMessageLimit } from './query.js'
 import { logError } from './text-logging.js'
 
 const analysisResponseCache = new Map()
@@ -87,12 +87,9 @@ export async function handleAnalysisSummaryRequest(url, env, path) {
       return {
         ok: true,
         summary: {
-          total: currentSummary.currentTotal,
           currentTotal: currentSummary.currentTotal,
           totalReceived: historicalSummary.totalReceived,
-          today: historicalSummary.todayReceived,
           todayReceived: historicalSummary.todayReceived,
-          last7Days: historicalSummary.last7DaysReceived,
           last7DaysReceived: historicalSummary.last7DaysReceived,
           unread: currentSummary.unread,
           starred: currentSummary.starred,
@@ -160,7 +157,7 @@ export async function handleAnalysisTrendRequest(url, env, path) {
 }
 
 export async function handleAnalysisSendersRequest(url, env, path) {
-  const limit = parseEmailLimit(url.searchParams.get('limit'))
+  const limit = parseMessageLimit(url.searchParams.get('limit'))
   const days = parseAnalysisDays(url, 14)
 
   try {

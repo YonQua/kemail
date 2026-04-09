@@ -1,260 +1,175 @@
-import {
-  DETAIL_REPARSE_MAX_LENGTH,
-  DETAIL_SOURCE_MAX_LENGTH,
-  DETAIL_TEXT_DIRECT_THRESHOLD,
-  EMAIL_DETAIL_FIELDS,
-  EMAIL_SOURCE_FIELDS,
-  MAX_RICH_DETAIL_MEMORY_CACHE_ENTRIES,
-  PARSER_VERSION,
-  RICH_DETAIL_MEMORY_CACHE_TTL,
-} from './constants.js'
-import {
-  compactDisplayText,
-  normalizeAddress,
-  normalizeHeaders,
-  normalizeText,
-  sanitizeEmailHtml,
-  truncateText,
-} from './text-core.js'
-import { extractActionLinksFromRawSource, extractActionLinksFromText } from './text-links.js'
+import { normalizeAddress, normalizeHeaders, normalizeText } from './text-core.js'
 
-const richDetailMemoryCaches = new WeakMap()
-const fallbackRichDetailMemoryCache = new Map()
+export const MESSAGE_TABLE = 'emails'
+export const MESSAGE_SUMMARY_FIELDS =
+  'id, recipient, sender, subject, preview_text, received_at, is_read, is_starred'
+export const MESSAGE_DETAIL_FIELDS =
+  'id, recipient, sender, subject, preview_text, text_body, html_body, raw_source, headers_json, attachments_json, artifacts_json, source_available, source_truncated, parse_status, received_at, is_read, is_starred'
 
-function displayBody(row) {
-  const resolvedRow = row && typeof row === 'object' ? row : {}
-  const readable = resolvedRow.body_readable
-  if (readable != null && readable !== '') return compactDisplayText(readable)
-  return compactDisplayText(resolvedRow.body != null ? resolvedRow.body : '')
+function buildIdPlaceholders(ids) {
+  return ids.map(() => '?').join(', ')
 }
 
-function buildEmailPreview(row) {
-  return truncateText(displayBody(row))
+function parseStoredJson(value, fallback) {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+  try {
+    const parsed = JSON.parse(value)
+    return parsed == null ? fallback : parsed
+  } catch (_) {
+    return fallback
+  }
 }
 
-function looksLikeMimeMessage(raw) {
-  if (!raw || typeof raw !== 'string') return false
-
-  const headerBoundary = raw.search(/\r?\n\r?\n/)
-  if (headerBoundary <= 0) return false
-
-  const head = raw.slice(0, Math.min(headerBoundary, 4000))
-  return /^(from|to|subject|date|mime-version|content-type):/im.test(head)
+function normalizeStoredArtifacts(value) {
+  const parsed = parseStoredJson(value, { codes: [], links: [] })
+  return {
+    codes: Array.isArray(parsed?.codes) ? parsed.codes.filter((item) => typeof item === 'string') : [],
+    links: Array.isArray(parsed?.links) ? parsed.links : [],
+  }
 }
 
-function shouldAttemptRichDetail(raw) {
-  if (!looksLikeMimeMessage(raw)) return false
-
-  const headerBoundary = raw.search(/\r?\n\r?\n/)
-  const head = raw.slice(0, Math.min(headerBoundary > 0 ? headerBoundary : 4000, 4000))
-  return /content-type:\s*(text\/html|multipart\/alternative|multipart\/mixed)/i.test(head)
+function normalizeStoredAttachments(value) {
+  const parsed = parseStoredJson(value, [])
+  return Array.isArray(parsed) ? parsed : []
 }
 
-function canEnableRichDetail(rawSource, readableText) {
-  if (!rawSource) return false
-  if (readableText.length > DETAIL_TEXT_DIRECT_THRESHOLD) return false
-  if (rawSource.length > DETAIL_REPARSE_MAX_LENGTH) return false
-  return shouldAttemptRichDetail(rawSource)
+function normalizeBooleanFlag(value) {
+  return Boolean(Number(value || 0))
 }
 
-function canLoadRawSource(rawSource) {
-  return (
-    typeof rawSource === 'string' &&
-    rawSource.length > 0 &&
-    rawSource.length <= DETAIL_SOURCE_MAX_LENGTH
+function buildMessageEnvelope(row, options = {}) {
+  if (!row || typeof row !== 'object') return null
+
+  const includeSource = options.includeSource === true
+  const includeHeaders = options.includeHeaders !== false
+  const includeAttachments = options.includeAttachments !== false
+  const sourceAvailable = normalizeBooleanFlag(row.source_available)
+  const sourceTruncated = normalizeBooleanFlag(row.source_truncated)
+  const headers = includeHeaders ? normalizeHeaders(parseStoredJson(row.headers_json, [])) : []
+  const attachments = includeAttachments ? normalizeStoredAttachments(row.attachments_json) : []
+
+  return {
+    id: Number(row.id || 0),
+    recipient: normalizeAddress(row.recipient),
+    sender: normalizeText(row.sender) || 'Unknown',
+    subject: normalizeText(row.subject) || 'No Subject',
+    received_at: row.received_at || '',
+    is_read: normalizeBooleanFlag(row.is_read),
+    is_starred: normalizeBooleanFlag(row.is_starred),
+    preview: normalizeText(row.preview_text),
+    parse_status: normalizeText(row.parse_status) || 'parsed',
+    source_available: sourceAvailable,
+    source_truncated: sourceTruncated,
+    content: {
+      text: normalizeText(row.text_body),
+      html: typeof row.html_body === 'string' ? row.html_body : '',
+      source: includeSource && sourceAvailable ? String(row.raw_source || '') : '',
+    },
+    artifacts: normalizeStoredArtifacts(row.artifacts_json),
+    headers,
+    attachments,
+  }
+}
+
+export function formatMessageSummary(row) {
+  if (!row || typeof row !== 'object') return null
+
+  return {
+    id: Number(row.id || 0),
+    recipient: normalizeAddress(row.recipient),
+    sender: normalizeText(row.sender) || 'Unknown',
+    subject: normalizeText(row.subject) || 'No Subject',
+    preview: normalizeText(row.preview_text),
+    received_at: row.received_at || '',
+    is_read: normalizeBooleanFlag(row.is_read),
+    is_starred: normalizeBooleanFlag(row.is_starred),
+  }
+}
+
+export function formatMessageDetail(row, options = {}) {
+  return buildMessageEnvelope(row, options)
+}
+
+export function isMessagesTableMissing(error) {
+  return String(error?.message || '').includes(`no such table: ${MESSAGE_TABLE}`)
+}
+
+export async function insertMessage(env, message) {
+  return env.DB.prepare(
+    `INSERT INTO ${MESSAGE_TABLE} (
+      recipient,
+      sender,
+      subject,
+      preview_text,
+      text_body,
+      html_body,
+      raw_source,
+      headers_json,
+      attachments_json,
+      artifacts_json,
+      source_available,
+      source_truncated,
+      parse_status,
+      received_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
+    .bind(
+      message.recipient,
+      message.sender,
+      message.subject,
+      message.preview_text,
+      message.text_body,
+      message.html_body,
+      message.raw_source,
+      message.headers_json,
+      message.attachments_json,
+      message.artifacts_json,
+      message.source_available ? 1 : 0,
+      message.source_truncated ? 1 : 0,
+      message.parse_status,
+      message.received_at
+    )
+    .run()
 }
 
-function richDetailCacheKey(emailId) {
-  return `rich:${PARSER_VERSION}:${String(emailId)}`
-}
-
-function getRichDetailMemoryCache(env) {
-  const holder = env?.DB || env?.CACHE || env
-  if (!holder || (typeof holder !== 'object' && typeof holder !== 'function')) {
-    return fallbackRichDetailMemoryCache
-  }
-
-  let cache = richDetailMemoryCaches.get(holder)
-  if (!cache) {
-    cache = new Map()
-    richDetailMemoryCaches.set(holder, cache)
-  }
-  return cache
-}
-
-function pruneExpiredRichDetailEntries(cache, now) {
-  for (const [key, entry] of cache.entries()) {
-    if (!entry || entry.expiresAt <= now) {
-      cache.delete(key)
-    }
-  }
-}
-
-function trimRichDetailMemoryCache(cache) {
-  while (cache.size >= MAX_RICH_DETAIL_MEMORY_CACHE_ENTRIES) {
-    const oldestKey = cache.keys().next().value
-    if (!oldestKey) break
-    cache.delete(oldestKey)
-  }
-}
-
-function resolveStoredDetailParser(rawSource, readableText, richRequested, richAvailable) {
-  if (!rawSource) return 'stored-text'
-  if (!richRequested) return 'stored-lite'
-  if (richAvailable) return 'stored-fallback'
-  if (readableText.length > DETAIL_TEXT_DIRECT_THRESHOLD) return 'stored-long'
-  if (rawSource.length > DETAIL_REPARSE_MAX_LENGTH) return 'stored-large'
-  return 'stored-text'
-}
-
-function buildBaseDetail(
-  row,
-  { parser = 'stored', richAvailable = false, richEnabled = false } = {}
-) {
-  const rawSource = typeof row.body === 'string' ? row.body : ''
-  const sourceAvailable = canLoadRawSource(rawSource)
-  const bodyText = displayBody(row)
-  const preview = buildEmailPreview(row)
-  const sourceLinks = extractActionLinksFromRawSource(rawSource)
-  const actionLinks = sourceLinks.length > 0 ? sourceLinks : extractActionLinksFromText(bodyText)
-
-  return {
-    id: row.id,
-    recipient: normalizeAddress(row.recipient),
-    sender: normalizeText(row.sender) || 'Unknown',
-    subject: normalizeText(row.subject) || 'No Subject',
-    received_at: row.received_at || '',
-    is_read: row.is_read ? 1 : 0,
-    is_starred: row.is_starred ? 1 : 0,
-    preview,
-    body: preview,
-    body_text: bodyText,
-    body_html: '',
-    body_source: '',
-    raw_available: false,
-    source_available: sourceAvailable,
-    rich_available: richAvailable,
-    rich_enabled: richEnabled,
-    headers: [],
-    attachments: [],
-    action_links: actionLinks,
-    parser,
-    parser_version: PARSER_VERSION,
-  }
-}
-
-function applyRichDetail(baseDetail, richDetail) {
-  return {
-    ...baseDetail,
-    sender: normalizeText(richDetail.sender) || baseDetail.sender,
-    subject: normalizeText(richDetail.subject) || baseDetail.subject,
-    body_text: compactDisplayText(richDetail.body_text || baseDetail.body_text),
-    body_html: sanitizeEmailHtml(richDetail.body_html),
-    headers: normalizeHeaders(richDetail.headers),
-    attachments: normalizeAttachments(richDetail.attachments),
-    action_links: Array.isArray(richDetail.action_links) ? richDetail.action_links : [],
-    parser: normalizeText(richDetail.parser) || 'rich-cache',
-    parser_version: normalizeText(richDetail.parser_version) || PARSER_VERSION,
-    rich_enabled: true,
-  }
-}
-
-function applyParsedTextDetail(baseDetail, parsedDetail) {
-  return {
-    ...baseDetail,
-    sender: normalizeText(parsedDetail.sender) || baseDetail.sender,
-    subject: normalizeText(parsedDetail.subject) || baseDetail.subject,
-    body_text: compactDisplayText(parsedDetail.body_text || baseDetail.body_text),
-    action_links: Array.isArray(parsedDetail.action_links)
-      ? parsedDetail.action_links
-      : baseDetail.action_links,
-    parser: normalizeText(parsedDetail.parser) || baseDetail.parser,
-    parser_version: normalizeText(parsedDetail.parser_version) || PARSER_VERSION,
-  }
-}
-
-export function buildEmailSource(row) {
-  if (!row || typeof row !== 'object') return null
-
-  const rawSource = typeof row.body === 'string' ? row.body : ''
-  const sourceAvailable = canLoadRawSource(rawSource)
-  return {
-    id: row.id,
-    source_available: sourceAvailable,
-    raw_available: sourceAvailable,
-    body_source: sourceAvailable ? rawSource : '',
-    parser_version: PARSER_VERSION,
-  }
-}
-
-export function formatEmailOutput(row) {
-  if (!row || typeof row !== 'object') return null
-
-  const recipient = normalizeAddress(row.recipient)
-  return {
-    ...row,
-    recipient,
-    body: displayBody(row),
-    preview: buildEmailPreview(row),
-    is_read: row.is_read ? 1 : 0,
-    is_starred: row.is_starred ? 1 : 0,
-  }
-}
-
-export function formatEmailSummary(row) {
-  if (!row || typeof row !== 'object') return null
-
-  return {
-    id: row.id,
-    recipient: normalizeAddress(row.recipient),
-    sender: normalizeText(row.sender) || 'Unknown',
-    subject: normalizeText(row.subject) || 'No Subject',
-    preview: truncateText(row.preview),
-    received_at: row.received_at || '',
-    is_read: row.is_read ? 1 : 0,
-    is_starred: row.is_starred ? 1 : 0,
-  }
-}
-
-export async function selectLatestEmailRow(env, recipient, options = {}) {
+export async function selectLatestMessageRow(env, recipient, options = {}) {
   const unreadOnly = options?.unreadOnly === true
   const sql = unreadOnly
-    ? `SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE recipient = ? AND is_read = 0 ORDER BY received_at DESC LIMIT 1`
-    : `SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE recipient = ? ORDER BY received_at DESC LIMIT 1`
+    ? `SELECT ${MESSAGE_DETAIL_FIELDS} FROM ${MESSAGE_TABLE} WHERE recipient = ? AND is_read = 0 ORDER BY received_at DESC, id DESC LIMIT 1`
+    : `SELECT ${MESSAGE_DETAIL_FIELDS} FROM ${MESSAGE_TABLE} WHERE recipient = ? ORDER BY received_at DESC, id DESC LIMIT 1`
 
   return env.DB.prepare(sql).bind(recipient).first()
 }
 
-export async function consumeLatestEmailRow(env, recipient, options = {}) {
+export async function consumeLatestMessageRow(env, recipient, options = {}) {
   const unreadOnly = options?.unreadOnly === true
-  const action = normalizeText(options?.action || 'peek').toLowerCase()
+  const effect = normalizeText(options?.effect || 'none').toLowerCase()
   const selectorWhere = unreadOnly ? 'recipient = ? AND is_read = 0' : 'recipient = ?'
 
-  if (action === 'peek') {
-    return selectLatestEmailRow(env, recipient, { unreadOnly })
+  if (effect === 'none') {
+    return selectLatestMessageRow(env, recipient, { unreadOnly })
   }
 
-  if (action === 'mark_read') {
+  if (effect === 'mark_read') {
     return env.DB.prepare(
-      `UPDATE emails
+      `UPDATE ${MESSAGE_TABLE}
        SET is_read = 1
        WHERE id = (
-         SELECT id FROM emails WHERE ${selectorWhere} ORDER BY received_at DESC LIMIT 1
+         SELECT id FROM ${MESSAGE_TABLE} WHERE ${selectorWhere} ORDER BY received_at DESC, id DESC LIMIT 1
        )
-       RETURNING ${EMAIL_DETAIL_FIELDS}`
+       RETURNING ${MESSAGE_DETAIL_FIELDS}`
     )
       .bind(recipient)
       .first()
   }
 
-  if (action === 'delete') {
+  if (effect === 'delete') {
     return env.DB.prepare(
-      `DELETE FROM emails
+      `DELETE FROM ${MESSAGE_TABLE}
        WHERE id = (
-         SELECT id FROM emails WHERE ${selectorWhere} ORDER BY received_at DESC LIMIT 1
+         SELECT id FROM ${MESSAGE_TABLE} WHERE ${selectorWhere} ORDER BY received_at DESC, id DESC LIMIT 1
        )
-       RETURNING ${EMAIL_DETAIL_FIELDS}`
+       RETURNING ${MESSAGE_DETAIL_FIELDS}`
     )
       .bind(recipient)
       .first()
@@ -263,190 +178,74 @@ export async function consumeLatestEmailRow(env, recipient, options = {}) {
   return null
 }
 
-export async function selectEmailRecipientById(env, id) {
-  return env.DB.prepare('SELECT recipient FROM emails WHERE id = ?').bind(id).first()
+export async function selectMessageRowById(env, id) {
+  return env.DB.prepare(`SELECT ${MESSAGE_DETAIL_FIELDS} FROM ${MESSAGE_TABLE} WHERE id = ?`)
+    .bind(id)
+    .first()
 }
 
-export async function selectEmailRowById(env, id) {
-  return env.DB.prepare(`SELECT ${EMAIL_DETAIL_FIELDS} FROM emails WHERE id = ?`).bind(id).first()
+export async function selectMessageRecipientById(env, id) {
+  return env.DB.prepare(`SELECT id, recipient FROM ${MESSAGE_TABLE} WHERE id = ?`).bind(id).first()
 }
 
-export async function selectEmailSourceRowById(env, id) {
-  return env.DB.prepare(`SELECT ${EMAIL_SOURCE_FIELDS} FROM emails WHERE id = ?`).bind(id).first()
-}
-
-function buildIdPlaceholders(ids) {
-  return ids.map(() => '?').join(', ')
-}
-
-export async function selectEmailRecipientsByIds(env, ids) {
+export async function selectMessageRecipientsByIds(env, ids) {
   if (!Array.isArray(ids) || ids.length === 0) return []
 
   const out = await env.DB.prepare(
-    `SELECT id, recipient FROM emails WHERE id IN (${buildIdPlaceholders(ids)})`
+    `SELECT id, recipient FROM ${MESSAGE_TABLE} WHERE id IN (${buildIdPlaceholders(ids)})`
   )
     .bind(...ids)
     .all()
-  return out.results || []
+
+  return Array.isArray(out?.results) ? out.results : []
 }
 
-export async function deleteEmailById(env, id) {
-  return env.DB.prepare('DELETE FROM emails WHERE id = ?').bind(id).run()
+export async function deleteMessageById(env, id) {
+  return env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE id = ?`).bind(id).run()
 }
 
-export async function deleteEmailsByIds(env, ids) {
+export async function deleteMessagesByIds(env, ids) {
   if (!Array.isArray(ids) || ids.length === 0) {
     return { meta: { changes: 0 } }
   }
 
-  return env.DB.prepare(`DELETE FROM emails WHERE id IN (${buildIdPlaceholders(ids)})`)
+  return env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE id IN (${buildIdPlaceholders(ids)})`)
     .bind(...ids)
     .run()
 }
 
-async function updateEmailFlagByIds(env, column, value, ids) {
+async function updateMessageBooleanState(env, ids, column, value) {
   if (!Array.isArray(ids) || ids.length === 0) {
     return { meta: { changes: 0 } }
   }
 
-  return env.DB.prepare(`UPDATE emails SET ${column} = ? WHERE id IN (${buildIdPlaceholders(ids)})`)
-    .bind(value, ...ids)
+  return env.DB.prepare(
+    `UPDATE ${MESSAGE_TABLE} SET ${column} = ? WHERE id IN (${buildIdPlaceholders(ids)})`
+  )
+    .bind(value ? 1 : 0, ...ids)
     .run()
 }
 
-export async function updateEmailReadState(env, ids, readValue) {
-  return updateEmailFlagByIds(env, 'is_read', readValue, ids)
+export async function updateMessageReadState(env, ids, readValue) {
+  return updateMessageBooleanState(env, ids, 'is_read', readValue)
 }
 
-export async function updateEmailStarState(env, ids, starredValue) {
-  return updateEmailFlagByIds(env, 'is_starred', starredValue, ids)
+export async function updateMessageStarState(env, ids, starredValue) {
+  return updateMessageBooleanState(env, ids, 'is_starred', starredValue)
 }
 
-async function readRichDetailCache(env, emailId) {
-  const cache = getRichDetailMemoryCache(env)
-  const now = Date.now()
-  const key = richDetailCacheKey(emailId)
-  const entry = cache.get(key)
-  if (!entry) return null
-  if (entry.expiresAt <= now) {
-    cache.delete(key)
-    return null
-  }
-  return entry.payload
-}
-
-async function writeRichDetailCache(env, emailId, detail) {
-  if (!detail) return
-
-  const payload = {
-    sender: detail.sender,
-    subject: detail.subject,
-    body_text: detail.body_text,
-    body_html: detail.body_html,
-    headers: detail.headers,
-    attachments: detail.attachments,
-    action_links: detail.action_links,
-    parser: detail.parser,
-    parser_version: detail.parser_version || PARSER_VERSION,
-  }
-
-  const cache = getRichDetailMemoryCache(env)
-  const now = Date.now()
-  pruneExpiredRichDetailEntries(cache, now)
-  trimRichDetailMemoryCache(cache)
-  cache.set(richDetailCacheKey(emailId), {
-    payload,
-    expiresAt: now + RICH_DETAIL_MEMORY_CACHE_TTL * 1000,
+export function buildPublicMessage(row, options = {}) {
+  return buildMessageEnvelope(row, {
+    includeSource: options.includeSource === true,
+    includeHeaders: true,
+    includeAttachments: true,
   })
 }
 
-export async function invalidateRichDetailCache(env, emailId) {
-  const cache = getRichDetailMemoryCache(env)
-  cache.delete(richDetailCacheKey(emailId))
-}
-
-export async function clearRichDetailMemoryCache(env) {
-  const cache = getRichDetailMemoryCache(env)
-  cache.clear()
-}
-
-export async function buildEmailDetail(env, row, options = {}) {
-  if (!row || typeof row !== 'object') return null
-
-  const { rich = false, parseEmailFn = null } = options
-  const rawSource = typeof row.body === 'string' ? row.body : ''
-  const readableText = displayBody(row)
-  const richAvailable = canEnableRichDetail(rawSource, readableText)
-  const baseDetail = buildBaseDetail(row, {
-    parser: resolveStoredDetailParser(rawSource, readableText, rich, richAvailable),
-    richAvailable,
-    richEnabled: false,
+export function buildAdminMessage(row) {
+  return buildMessageEnvelope(row, {
+    includeSource: true,
+    includeHeaders: true,
+    includeAttachments: true,
   })
-
-  if (!rawSource || !richAvailable) {
-    return baseDetail
-  }
-
-  const cachedRich = await readRichDetailCache(env, row.id)
-  if (cachedRich) {
-    if (!rich) {
-      return applyParsedTextDetail(baseDetail, cachedRich)
-    }
-    return applyRichDetail(baseDetail, cachedRich)
-  }
-
-  if (typeof parseEmailFn !== 'function') {
-    if (!rich) {
-      return baseDetail
-    }
-    throw new Error('parseEmailFn is required when rich detail is requested')
-  }
-
-  const parsed = await parseEmailFn(rawSource, row.sender, row.subject)
-  const parsedDetail = {
-    sender: parsed.sender || normalizeText(row.sender) || 'Unknown',
-    subject: parsed.subject || normalizeText(row.subject) || 'No Subject',
-    body_text: parsed.bodyText || readableText,
-    body_html: sanitizeEmailHtml(parsed.bodyHtml),
-    headers: parsed.headers,
-    attachments: parsed.attachments,
-    action_links: parsed.actionLinks || [],
-    parser: parsed.parser,
-    parser_version: PARSER_VERSION,
-  }
-  await writeRichDetailCache(env, row.id, parsedDetail)
-
-  if (!rich) {
-    return applyParsedTextDetail(baseDetail, parsedDetail)
-  }
-
-  return applyRichDetail(baseDetail, parsedDetail)
-}
-
-function getAttachmentSize(content) {
-  if (!content) return 0
-  if (typeof content.length === 'number') return content.length
-  if (typeof content.byteLength === 'number') return content.byteLength
-  return 0
-}
-
-export function normalizeAttachments(attachments) {
-  if (!Array.isArray(attachments)) return []
-
-  return attachments
-    .map((attachment) => {
-      if (!attachment || typeof attachment !== 'object') return null
-      return {
-        filename: normalizeText(attachment.filename),
-        content_type: normalizeText(
-          attachment.content_type || attachment.mimeType || attachment.mime_type
-        ),
-        content_id: normalizeText(attachment.content_id || attachment.contentId),
-        size: getAttachmentSize(attachment.content),
-      }
-    })
-    .filter(
-      (attachment) =>
-        attachment && (attachment.filename || attachment.content_type || attachment.size > 0)
-    )
 }

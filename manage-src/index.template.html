@@ -677,12 +677,6 @@
                     <template x-if="hasDetailActions">
                         <div class="hero-actions">
                             <span class="chip" :class="detailChipClass" x-text="detailChipLabel"></span>
-                            <template x-if="showSwitchToLiteButton"><button class="btn btn-secondary"
-                                    @click="switchToLite">查看精简摘要</button></template>
-                            <template x-if="showSwitchToRichButton"><button class="btn btn-secondary"
-                                    @click="switchToRich">查看富解析</button></template>
-                            <template x-if="showLoadRichButton"><button class="btn btn-secondary"
-                                    @click="loadRichDetail">请求富解析</button></template>
                             <button class="btn btn-danger btn-icon" @click="deleteActiveMail" title="删除当前邮件">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
@@ -785,16 +779,16 @@
                             <!-- Content Renderer -->
                             <div class="mail-viewer-container">
                                 <template x-if="showHtmlView">
-                                    <iframe class="mail-iframe" :srcdoc="activeMailDetail.safe_body_html"
+                                    <iframe class="mail-iframe" :srcdoc="activeMailDetail.safe_content_html"
                                         sandbox="allow-popups allow-popups-to-escape-sandbox"></iframe>
                                 </template>
 
                                 <template x-if="showTextView">
-                                    <div class="text-view-content" x-text="bodyTextLabel"></div>
+                                    <div class="text-view-content" x-text="contentTextLabel"></div>
                                 </template>
 
                                 <template x-if="showSourceView">
-                                    <div class="text-view-content text-view-source" x-text="bodySourceLabel"></div>
+                                    <div class="text-view-content text-view-source" x-text="contentSourceLabel"></div>
                                 </template>
                             </div>
 

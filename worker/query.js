@@ -1,10 +1,11 @@
-import { DEFAULT_EMAIL_LIMIT, MAX_EMAIL_LIMIT } from './constants.js'
+import { DEFAULT_MESSAGE_LIMIT, MAX_MESSAGE_LIMIT } from './constants.js'
+import { MESSAGE_TABLE } from './email-store.js'
 import { normalizeText } from './text-core.js'
 
-export function parseEmailLimit(rawValue) {
+export function parseMessageLimit(rawValue) {
   const parsed = parseInt(rawValue || '', 10)
-  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_EMAIL_LIMIT
-  return Math.min(parsed, MAX_EMAIL_LIMIT)
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_MESSAGE_LIMIT
+  return Math.min(parsed, MAX_MESSAGE_LIMIT)
 }
 
 export function parseSinceId(rawValue) {
@@ -25,7 +26,7 @@ export function parseDateParam(rawValue) {
   return date.toISOString()
 }
 
-function buildEmailListConditions(options) {
+function buildMessageListConditions(options) {
   const { address, sender, subject, query, start, end, sinceId, sortOrder, limit } = options
 
   const conditions = []
@@ -70,20 +71,19 @@ function buildEmailListConditions(options) {
   return { conditions, params, sortOrder, limit }
 }
 
-export function buildEmailListQuery(fields, options) {
-  const { conditions, params, sortOrder, limit } = buildEmailListConditions(options)
-
+export function buildMessageListQuery(fields, options) {
+  const { conditions, params, sortOrder, limit } = buildMessageListConditions(options)
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-  const sql = `SELECT ${fields} FROM emails ${whereClause} ORDER BY received_at ${sortOrder} LIMIT ?`
+  const sql = `SELECT ${fields} FROM ${MESSAGE_TABLE} ${whereClause} ORDER BY received_at ${sortOrder}, id ${sortOrder} LIMIT ?`
   params.push(limit)
   return { sql, params }
 }
 
-export function buildEmailCountQuery(options) {
-  const { conditions, params } = buildEmailListConditions(options)
+export function buildMessageCountQuery(options) {
+  const { conditions, params } = buildMessageListConditions(options)
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   return {
-    sql: `SELECT COUNT(*) as total FROM emails ${whereClause}`,
+    sql: `SELECT COUNT(*) as total FROM ${MESSAGE_TABLE} ${whereClause}`,
     params,
   }
 }

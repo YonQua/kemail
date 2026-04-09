@@ -17,20 +17,17 @@ const MANAGED_ASSET_NAMES = new Set([
   'vendor-chart',
   'vendor-alpine',
 ])
-const MANAGED_ASSET_LATEST_ALIASES = new Map([
-  ['manage.css', 'manage.latest.css'],
-  ['manage.js', 'manage.latest.js'],
-  ['api-docs.css', 'api-docs.latest.css'],
-  ['api-docs.js', 'api-docs.latest.js'],
-  ['ui-foundation.css', 'ui-foundation.latest.css'],
-  ['vendor-chart.js', 'vendor-chart.latest.js'],
-  ['vendor-alpine.js', 'vendor-alpine.latest.js'],
-])
 const HTML_CSP =
   "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 function isManagedAsset(filename) {
   const match = filename.match(/^([a-z-]+)\.[a-f0-9]{10}\.(css|js)$/)
+  if (!match) return false
+  return MANAGED_ASSET_NAMES.has(match[1])
+}
+
+function isManagedLegacyAlias(filename) {
+  const match = filename.match(/^([a-z-]+)\.latest\.(css|js)$/)
   if (!match) return false
   return MANAGED_ASSET_NAMES.has(match[1])
 }
@@ -66,9 +63,13 @@ function cleanupManageAssets(activeFilenames) {
   ensureDir(publicAssetsDir)
 
   for (const filename of fs.readdirSync(publicAssetsDir)) {
-    if (!isManagedAsset(filename)) continue
-    if (activeFilenames.has(filename)) continue
-    fs.rmSync(path.join(publicAssetsDir, filename), { force: true })
+    if (isManagedLegacyAlias(filename)) {
+      fs.rmSync(path.join(publicAssetsDir, filename), { force: true })
+      continue
+    }
+    if (isManagedAsset(filename) && !activeFilenames.has(filename)) {
+      fs.rmSync(path.join(publicAssetsDir, filename), { force: true })
+    }
   }
 }
 
@@ -371,9 +372,9 @@ function buildManageAssets() {
       infoDescription:
         'kemail 的公开主链接口契约。公开发布的 `/openapi.json` 与 `/api-docs` 只保留第三方自动化最常用的生成与消费链路。',
       contractInfo:
-        '公开 `/openapi.json` 仅包含最推荐的两步主链：发号与消费最新地址邮件；高级查询、回溯与后台能力只在内部文档中提供。',
+        '公开 `/openapi.json` 仅包含最推荐的两步主链：发号与消费下一封邮件；内部消息管理、回溯与后台能力只在管理员文档中提供。',
       securityDescription:
-        '统一使用 `Authorization: Bearer <TOKEN>`。公开契约只覆盖发号与 consume 主链，`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用。',
+        '统一使用 `Authorization: Bearer <TOKEN>`。公开契约只覆盖 `/api/mailboxes` 与 `/api/messages/next`，`READ_API_KEY` 与 `ADMIN_API_KEY` 都可调用。',
     }),
     {
       pruneUnusedComponents: true,
@@ -441,12 +442,6 @@ function buildManageAssets() {
   cleanupManageAssets(new Set(assets.map((asset) => asset.filename)))
   assets.forEach((asset) => {
     writeFile(path.join(publicAssetsDir, asset.filename), asset.source)
-  })
-  assets.forEach((asset) => {
-    const aliasKey = `${asset.baseName}.${asset.ext}`
-    const aliasName = MANAGED_ASSET_LATEST_ALIASES.get(aliasKey)
-    if (!aliasName) return
-    writeFile(path.join(publicAssetsDir, aliasName), asset.source)
   })
 
   const html = [
@@ -533,35 +528,6 @@ function buildManageAssets() {
     headerLines.push('  X-Content-Type-Options: nosniff')
     headerLines.push('')
   })
-
-  headerLines.push('/assets/manage.latest.css')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/manage.latest.js')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/api-docs.latest.css')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/api-docs.latest.js')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/ui-foundation.latest.css')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/vendor-chart.latest.js')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
-  headerLines.push('/assets/vendor-alpine.latest.js')
-  headerLines.push('  Cache-Control: no-store')
-  headerLines.push('  X-Content-Type-Options: nosniff')
-  headerLines.push('')
 
   writeFile(path.join(publicDir, '_headers'), headerLines.join('\n'))
 

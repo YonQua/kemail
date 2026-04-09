@@ -1,10 +1,37 @@
 import PostalMime from 'postal-mime'
-import { normalizeAttachments } from './email-store.js'
 import { compactDisplayText, normalizeHeaders, normalizeText, stripHtml } from './text-core.js'
 import { extractActionLinks, extractActionLinksFromText } from './text-links.js'
 import { logError } from './text-logging.js'
 
 let wasmMailParserModulePromise = null
+
+function getAttachmentSize(content) {
+  if (!content) return 0
+  if (typeof content.length === 'number') return content.length
+  if (typeof content.byteLength === 'number') return content.byteLength
+  return 0
+}
+
+function normalizeAttachments(attachments) {
+  if (!Array.isArray(attachments)) return []
+
+  return attachments
+    .map((attachment) => {
+      if (!attachment || typeof attachment !== 'object') return null
+      return {
+        filename: normalizeText(attachment.filename),
+        content_type: normalizeText(
+          attachment.content_type || attachment.mimeType || attachment.mime_type
+        ),
+        content_id: normalizeText(attachment.content_id || attachment.contentId),
+        size: getAttachmentSize(attachment.content),
+      }
+    })
+    .filter(
+      (attachment) =>
+        attachment && (attachment.filename || attachment.content_type || attachment.size > 0)
+    )
+}
 
 function hasExplicitPlainTextPart(rawSource) {
   return /content-type:\s*text\/plain\b/i.test(String(rawSource || ''))
@@ -126,14 +153,11 @@ function buildParsedEmailResult({
     actionLinks = extractActionLinksFromText(normalizedText)
   }
 
-  const readableText = normalizedText || compactDisplayText(stripHtml(normalizedHtml)) || ''
-
   return {
     sender: resolvedSender,
     subject: resolvedSubject,
     bodyText: normalizedText,
     bodyHtml: normalizedHtml,
-    bodyReadable: readableText,
     headers: normalizeHeaders(headers),
     attachments: normalizeAttachments(attachments),
     actionLinks,

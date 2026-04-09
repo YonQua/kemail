@@ -442,8 +442,6 @@ function createMailAppState() {
     // Reader State
     activeMail: null,
     activeMailDetail: null,
-    liteMailDetail: null,
-    richMailDetail: null,
     detailLoading: false,
     renderMode: 'text', // 'html', 'text', 'source'
     detailRequestToken: 0,
@@ -494,8 +492,8 @@ function createMailAppState() {
       this.authInput = trimmedKey
       this.authLoading = true
       try {
-        // 用稳定的列表读取验证鉴权，避免统计口迁移时影响登录。
-        const data = await this.apiFetch('/api/emails?limit=1&summary=1')
+        // 用内部消息列表验证鉴权，同时读取当前 key 是否具备管理员能力。
+        const data = await this.apiFetch('/api/admin/messages?limit=1')
         this.adminAccessAvailable = Boolean(data?.permissions?.admin)
         this.authorized = true
         this.loadInitialData()
@@ -792,9 +790,9 @@ function createMailAppState() {
         const s = summaryData.summary || {}
         this.stats = {
           totalReceived: s.totalReceived || 0,
-          currentTotal: s.currentTotal ?? s.total ?? 0,
-          todayReceived: s.todayReceived ?? s.today ?? 0,
-          last7DaysReceived: s.last7DaysReceived ?? s.last7Days ?? 0,
+          currentTotal: s.currentTotal || 0,
+          todayReceived: s.todayReceived || 0,
+          last7DaysReceived: s.last7DaysReceived || 0,
           unread: s.unread || 0,
           starred: s.starred || 0,
           end: String(s.end || ''),
@@ -1968,22 +1966,19 @@ function createMailAppState() {
 
     async generateManagedAddress() {
       if (this.addressGenerating) return
-      if (!this.canUseAdminActions) {
-        this.showError('当前密钥为只读，无法生成邮箱')
-        return
-      }
       this.addressGenerating = true
       try {
-        const data = await this.apiFetch('/api/addresses/generate', {
+        const data = await this.apiFetch('/api/mailboxes', {
           method: 'POST',
         })
-        const generatedEmail = String(data?.email || '').trim()
+        const mailbox = data?.mailbox || {}
+        const generatedEmail = String(mailbox?.address || '').trim()
         if (!generatedEmail) {
           throw new Error('服务端未返回完整邮箱地址')
         }
         this.generatedEmail = generatedEmail
-        this.generatedDomain = String(data?.domain || generatedEmail.split('@')[1] || '')
-        this.generatedIssuedAt = String(data?.issued_at || '')
+        this.generatedDomain = String(mailbox?.domain || generatedEmail.split('@')[1] || '')
+        this.generatedIssuedAt = String(mailbox?.issued_at || '')
         this.generatedAddressCopyState = 'idle'
         if (this.generatedAddressCopyTimer) {
           clearTimeout(this.generatedAddressCopyTimer)
@@ -2124,7 +2119,7 @@ function createMailAppState() {
     },
 
     get showGeneratedAddressCard() {
-      return this.canUseAdminActions && this.generatedAddressAvailable
+      return this.generatedAddressAvailable
     },
 
     get generatedAddressMetaLabel() {
@@ -2209,7 +2204,7 @@ function createMailAppState() {
       const refreshStartedAt = Date.now()
       this.refreshHint = '刷新中...'
       try {
-        let path = '/api/emails?limit=50&summary=1'
+        let path = '/api/admin/messages?limit=50'
         if (this.searchAddress) path += `&address=${encodeURIComponent(this.searchAddress)}`
         if (this.sortOrder) path += `&sort=${this.sortOrder}`
 
@@ -2218,8 +2213,8 @@ function createMailAppState() {
           this.adminAccessAvailable = data.permissions.admin
         }
         this.mailServerTotal = Number(data?.result_info?.total_count || 0)
-        const emails = Array.isArray(data.emails) ? data.emails : []
-        this.mails = emails.map((mail) => this.decorateMailSummary(mail))
+        const messages = Array.isArray(data.messages) ? data.messages : []
+        this.mails = messages.map((mail) => this.decorateMailSummary(mail))
         this.clearFilterKeyword()
         this.syncActiveMailReference()
         this.refreshMailUiState()
@@ -2402,8 +2397,8 @@ function createMailAppState() {
           }))
         : []
 
-      const rawActionLinks = Array.isArray(detail?.action_links)
-        ? detail.action_links.map((link) => ({
+      const rawActionLinks = Array.isArray(detail?.artifacts?.links)
+        ? detail.artifacts.links.map((link) => ({
             ...link,
             label_text: normalizeActionLinkLabel(link?.label, link?.url),
             safe_url: safeLinkUrl(link?.url, this.baseApiUrl),
@@ -2417,10 +2412,10 @@ function createMailAppState() {
         action_links: actionLinks,
         subject_label: detail?.subject || '无主题',
         received_full_label: this.formatDateFull(detail?.received_at),
-        body_text_label: compactBodyTextValue(detail?.body_text),
-        body_source_label:
-          detail?.body_source || '在加载富解析后方可查看原始代码（或通过/source API）。',
-        safe_body_html: getSafeHtmlDocument(detail?.body_html),
+        content_text_label: compactBodyTextValue(detail?.content?.text),
+        content_source_label:
+          detail?.content?.source || (detail?.source_available ? '原始 MIME 为空。' : '当前邮件未保存原始 MIME。'),
+        safe_content_html: getSafeHtmlDocument(detail?.content?.html),
       }
     },
 
@@ -2466,8 +2461,6 @@ function createMailAppState() {
     clearActiveMailState() {
       this.activeMail = null
       this.activeMailDetail = null
-      this.liteMailDetail = null
-      this.richMailDetail = null
       this.isMobileDrawerOpen = false
       this.showAllActionLinks = false
     },
@@ -2491,7 +2484,7 @@ function createMailAppState() {
       this.isMobileDrawerOpen = true // Open drawer on mobile
 
       try {
-        const data = await this.apiFetch(`/api/emails/${mail.id}`)
+        const data = await this.apiFetch(`/api/admin/messages/${mail.id}`)
         if (
           requestToken !== this.detailRequestToken ||
           !this.activeMail ||
@@ -2499,12 +2492,10 @@ function createMailAppState() {
         ) {
           return
         }
-        const preparedDetail = this.decorateMailDetail(data.email || {})
-        this.liteMailDetail = preparedDetail
-        this.richMailDetail = preparedDetail.rich_enabled ? preparedDetail : null
+        const preparedDetail = this.decorateMailDetail(data.message || {})
         this.activeMailDetail = preparedDetail
         this.showAllActionLinks = false
-        this.renderMode = this.activeMailDetail.body_html ? 'html' : 'text'
+        this.renderMode = this.activeMailDetail.content?.html ? 'html' : 'text'
         this.resetDetailScroll()
 
         await this.markMailAsReadIfAllowed(mail.id)
@@ -2520,79 +2511,22 @@ function createMailAppState() {
     },
 
     async markMailAsReadIfAllowed(mailId) {
-      if (!this.canUseAdminActions) return
       const mail = this.findMailById(mailId)
       if (!mail || mail.is_read) return
 
       try {
-        await this.apiFetch('/api/emails/read', {
+        await this.apiFetch('/api/admin/messages/read', {
           method: 'PUT',
           body: JSON.stringify({ ids: [mailId], read: 1 }),
         })
         this.markAsReadLocal(mailId)
         await this.refreshStatsAfterMutation()
       } catch (e) {
-        if (e.message === 'Admin access required') {
+        if (e.message === 'Admin access required' || e.message === 'Unauthorized') {
           return
         }
         this.showError('标记阅读失败')
       }
-    },
-
-    async loadRichDetail() {
-      if (!this.activeMail) return
-      if (!this.canUseAdminActions) {
-        this.showError('当前密钥为只读，无法请求富解析')
-        return
-      }
-      const activeMailId = this.activeMail.id
-      const requestToken = ++this.detailRequestToken
-      this.detailLoading = true
-      try {
-        const data = await this.apiFetch(`/api/emails/${activeMailId}?rich=1`)
-        if (
-          requestToken !== this.detailRequestToken ||
-          !this.activeMail ||
-          this.activeMail.id !== activeMailId
-        ) {
-          return
-        }
-        if (data && data.email) {
-          const preparedDetail = this.decorateMailDetail(data.email)
-          this.activeMailDetail = preparedDetail
-          this.richMailDetail = preparedDetail
-          this.showAllActionLinks = false
-          this.renderMode = this.activeMailDetail.body_html ? 'html' : 'text'
-          this.resetDetailScroll()
-        }
-      } catch (e) {
-        if (requestToken !== this.detailRequestToken) return
-        this.showError('请求富解析失败')
-      } finally {
-        if (requestToken === this.detailRequestToken) {
-          this.detailLoading = false
-        }
-      }
-    },
-    hasRichDetail() {
-      return Boolean(this.richMailDetail && this.richMailDetail.rich_enabled)
-    },
-    switchToLite() {
-      if (!this.liteMailDetail) return
-      this.activeMailDetail = this.liteMailDetail
-      this.showAllActionLinks = false
-      this.renderMode = 'text'
-      this.resetDetailScroll()
-    },
-    switchToRich() {
-      if (this.richMailDetail) {
-        this.activeMailDetail = this.richMailDetail
-        this.showAllActionLinks = false
-        this.renderMode = this.activeMailDetail.body_html ? 'html' : 'text'
-        this.resetDetailScroll()
-        return
-      }
-      this.loadRichDetail()
     },
 
     closeMobileDrawer() {
@@ -2612,38 +2546,20 @@ function createMailAppState() {
     },
 
     get detailChipClass() {
-      return this.activeMailDetail && this.activeMailDetail.rich_enabled
+      const status = String(this.activeMailDetail?.parse_status || '')
+      return status === 'parsed' || status === 'parsed_source_truncated'
         ? 'chip-green'
         : 'chip-gray'
     },
 
     get detailChipLabel() {
-      return this.activeMailDetail && this.activeMailDetail.rich_enabled
-        ? '富解析完成'
-        : '精简摘要视图'
-    },
-
-    get showSwitchToLiteButton() {
-      return Boolean(this.activeMailDetail && this.activeMailDetail.rich_enabled)
-    },
-
-    get showSwitchToRichButton() {
-      return Boolean(
-        this.canUseAdminActions &&
-        this.activeMailDetail &&
-        !this.activeMailDetail.rich_enabled &&
-        this.hasRichDetail()
-      )
-    },
-
-    get showLoadRichButton() {
-      return Boolean(
-        this.canUseAdminActions &&
-        this.activeMailDetail &&
-        !this.activeMailDetail.rich_enabled &&
-        this.activeMailDetail.rich_available &&
-        !this.hasRichDetail()
-      )
+      const status = String(this.activeMailDetail?.parse_status || '')
+      if (status === 'parsed') return '完整解析'
+      if (status === 'parsed_source_truncated') return '已解析，原文未保存'
+      if (status === 'parse_skipped') return '未完整解析，保留原文'
+      if (status === 'parse_skipped_source_truncated') return '未完整解析'
+      if (status === 'too_large') return '原文过大'
+      return '邮件详情'
     },
 
     get detailSubjectLabel() {
@@ -2685,11 +2601,11 @@ function createMailAppState() {
     },
 
     get detailHasHtmlBody() {
-      return Boolean(this.activeMailDetail?.body_html)
+      return Boolean(this.activeMailDetail?.content?.html)
     },
 
     get detailHasRawSource() {
-      return Boolean(this.activeMailDetail?.raw_available)
+      return Boolean(this.activeMailDetail?.source_available)
     },
 
     get hasDetailActions() {
@@ -2724,29 +2640,26 @@ function createMailAppState() {
     },
 
     get showHtmlView() {
-      return Boolean(this.renderMode === 'html' && this.activeMailDetail?.body_html)
+      return Boolean(this.renderMode === 'html' && this.activeMailDetail?.content?.html)
     },
 
     get showTextView() {
       return Boolean(
         this.renderMode === 'text' ||
-        (this.renderMode === 'html' && !this.activeMailDetail?.body_html)
+        (this.renderMode === 'html' && !this.activeMailDetail?.content?.html)
       )
     },
 
     get showSourceView() {
-      return Boolean(this.renderMode === 'source' && this.activeMailDetail?.raw_available)
+      return Boolean(this.renderMode === 'source' && this.activeMailDetail?.source_available)
     },
 
-    get bodyTextLabel() {
-      return this.activeMailDetail?.body_text_label || '提取纯文本失败...'
+    get contentTextLabel() {
+      return this.activeMailDetail?.content_text_label || '提取纯文本失败...'
     },
 
-    get bodySourceLabel() {
-      return (
-        this.activeMailDetail?.body_source_label ||
-        '在加载富解析后方可查看原始代码（或通过/source API）。'
-      )
+    get contentSourceLabel() {
+      return this.activeMailDetail?.content_source_label || '当前邮件未保存原始 MIME。'
     },
 
     // --- Batch actions --- //
@@ -2773,7 +2686,7 @@ function createMailAppState() {
         if (this.activeMailDetail && this.activeMailDetail.id === id) {
           this.activeMailDetail.is_starred = nextStar
         }
-        await this.apiFetch('/api/emails/star', {
+        await this.apiFetch('/api/admin/messages/star', {
           method: 'PUT',
           body: JSON.stringify({ ids: [id], starred: nextStar ? 1 : 0 }),
         })
@@ -2806,7 +2719,7 @@ function createMailAppState() {
 
       const id = this.activeMailDetail.id
       try {
-        await this.apiFetch(`/api/emails/${id}`, { method: 'DELETE' })
+        await this.apiFetch(`/api/admin/messages/${id}`, { method: 'DELETE' })
         this.mails = this.mails.filter((m) => m.id !== id)
         this.clearFilterKeyword()
         this.clearActiveMailState()
@@ -2827,7 +2740,7 @@ function createMailAppState() {
         .filter((id) => Number.isFinite(id) && id > 0)
       if (!ids.length) return
       try {
-        const result = await this.apiFetch('/api/emails/delete', {
+        const result = await this.apiFetch('/api/admin/messages/delete', {
           method: 'POST',
           body: JSON.stringify({ ids }),
         })
@@ -2861,7 +2774,7 @@ function createMailAppState() {
       }
       const ids = [...this.selectedIds]
       try {
-        await this.apiFetch('/api/emails/read', {
+        await this.apiFetch('/api/admin/messages/read', {
           method: 'PUT',
           body: JSON.stringify({ ids: ids, read: 1 }),
         })

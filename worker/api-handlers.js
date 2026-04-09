@@ -6,30 +6,28 @@ import {
 } from './analysis.js'
 import { handleAdminOpenApiRequest } from './api-docs-handlers.js'
 import { authErrorResponse, hasAdminAccess, hasReadAccess } from './auth.js'
-import { EMAIL_DETAIL_FIELDS, EMAIL_SUMMARY_FIELDS, MAX_BATCH_EMAIL_IDS } from './constants.js'
+import { MAX_BATCH_MESSAGE_IDS } from './constants.js'
 import {
-  handleGeneratedAddressRequest,
+  handleMailboxCreateRequest,
   handleManagedDomainBatchPolicyRequest,
   handleManagedDomainPolicyRequest,
   handleManagedDomainsRequest,
   handleManagedDomainSyncRequest,
 } from './domain-handlers.js'
 import {
-  buildEmailDetail,
-  buildEmailSource,
-  consumeLatestEmailRow,
-  deleteEmailById,
-  deleteEmailsByIds,
-  formatEmailOutput,
-  formatEmailSummary,
-  invalidateRichDetailCache,
-  selectEmailRecipientById,
-  selectEmailRecipientsByIds,
-  selectEmailRowById,
-  selectEmailSourceRowById,
-  selectLatestEmailRow,
-  updateEmailReadState,
-  updateEmailStarState,
+  buildAdminMessage,
+  buildPublicMessage,
+  consumeLatestMessageRow,
+  deleteMessageById,
+  deleteMessagesByIds,
+  formatMessageSummary,
+  isMessagesTableMissing,
+  MESSAGE_SUMMARY_FIELDS,
+  selectMessageRecipientById,
+  selectMessageRecipientsByIds,
+  selectMessageRowById,
+  updateMessageReadState,
+  updateMessageStarState,
 } from './email-store.js'
 import { jsonResponse, methodNotAllowed } from './http.js'
 import {
@@ -42,20 +40,23 @@ import {
   handleGovernanceSettingsRequest,
   handleGovernanceStatusRequest,
 } from './mail-governance-handlers.js'
-import { parseEmail } from './parser.js'
 import {
-  buildEmailCountQuery,
-  buildEmailListQuery,
+  buildMessageCountQuery,
+  buildMessageListQuery,
   normalizeIdList,
   parseDateParam,
-  parseEmailLimit,
+  parseMessageLimit,
   parseSinceId,
   parseSortOrder,
 } from './query.js'
 import { normalizeAddress, normalizeText } from './text-core.js'
 import { logError } from './text-logging.js'
 
-const LATEST_CONSUME_ACTIONS = new Set(['peek', 'mark_read', 'delete'])
+const MESSAGE_NEXT_EFFECTS = new Set(['none', 'mark_read', 'delete'])
+
+function missingMessagesTableResponse() {
+  return jsonResponse({ ok: false, error: 'emails 表不存在，请先执行 D1 迁移' }, 503)
+}
 
 export function ensureApiReadAccess(request, env) {
   if (!hasReadAccess(request, env)) {
@@ -85,8 +86,11 @@ function validateBatchIds(ids) {
     return jsonResponse({ ok: false, error: 'Missing ids' }, 400)
   }
 
-  if (ids.length > MAX_BATCH_EMAIL_IDS) {
-    return jsonResponse({ ok: false, error: `Too many ids (max ${MAX_BATCH_EMAIL_IDS})` }, 400)
+  if (ids.length > MAX_BATCH_MESSAGE_IDS) {
+    return jsonResponse(
+      { ok: false, error: `Too many ids (max ${MAX_BATCH_MESSAGE_IDS})` },
+      400
+    )
   }
 
   return null
@@ -101,7 +105,7 @@ async function parseBatchMutationPayload(request, path, actionLabel) {
   const ids = normalizeIdList(payload?.ids)
   const validationError = validateBatchIds(ids)
   if (validationError) {
-    return { errorResponse: validationError }
+    return { payload, ids, errorResponse: validationError }
   }
 
   return { payload, ids, errorResponse: null }
@@ -114,8 +118,8 @@ function parseBooleanFlag(value, defaultValue = false) {
   return null
 }
 
-async function parseLatestConsumePayload(request, path) {
-  const payload = await parseJsonPayload(request, path, 'Latest consume')
+async function parseMessagesNextPayload(request, path) {
+  const payload = await parseJsonPayload(request, path, 'Message next')
   if (payload == null) {
     return { errorResponse: jsonResponse({ ok: false, error: 'Invalid request body' }, 400) }
   }
@@ -127,73 +131,63 @@ async function parseLatestConsumePayload(request, path) {
 
   const unreadOnly = parseBooleanFlag(payload?.unread_only, true)
   if (unreadOnly == null) {
-    return {
-      errorResponse: jsonResponse({ ok: false, error: 'Invalid unread_only' }, 400),
-    }
+    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid unread_only' }, 400) }
   }
 
-  const action = normalizeText(payload?.action || 'peek').toLowerCase()
-  if (!LATEST_CONSUME_ACTIONS.has(action)) {
-    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid action' }, 400) }
+  const includeSource = parseBooleanFlag(payload?.include_source, false)
+  if (includeSource == null) {
+    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid include_source' }, 400) }
+  }
+
+  const effect = normalizeText(payload?.effect || 'none').toLowerCase()
+  if (!MESSAGE_NEXT_EFFECTS.has(effect)) {
+    return { errorResponse: jsonResponse({ ok: false, error: 'Invalid effect' }, 400) }
   }
 
   return {
     address,
     unreadOnly,
-    action,
+    includeSource,
+    effect,
     errorResponse: null,
   }
 }
 
-async function handleLatestRequest(env, url, path) {
-  const address = normalizeAddress(url.searchParams.get('address'))
-  if (!address) return jsonResponse({ ok: false, error: 'Missing address' }, 400)
-
-  try {
-    // `/api/latest` 改为直接走 D1，配合 `(recipient, received_at DESC)` 索引，避免高频轮询持续写 Workers KV。
-    const row = await selectLatestEmailRow(env, address)
-    const out = formatEmailOutput(row)
-    return jsonResponse({ ok: true, email: out })
-  } catch (error) {
-    logError('Latest email query failed', error, { path, address })
-    return jsonResponse({ ok: false, error: 'Internal error' }, 500)
-  }
-}
-
-async function handleLatestConsumeRequest(request, env, path) {
+async function handleMessagesNextRequest(request, env, path) {
   const authFailure = ensureApiReadAccess(request, env)
   if (authFailure) return authFailure
 
-  const { address, unreadOnly, action, errorResponse } = await parseLatestConsumePayload(
-    request,
-    path
-  )
+  const { address, unreadOnly, includeSource, effect, errorResponse } =
+    await parseMessagesNextPayload(request, path)
   if (errorResponse) return errorResponse
 
   try {
-    const row = await consumeLatestEmailRow(env, address, { unreadOnly, action })
+    const row = await consumeLatestMessageRow(env, address, { unreadOnly, effect })
     if (!row) {
-      return jsonResponse({ ok: true, email: null })
+      return jsonResponse({ ok: true, message: null })
     }
 
-    if (action === 'delete') {
-      await invalidateRichDetailCache(env, row.id)
-      invalidateAnalysisMemoryCache()
-      return jsonResponse({ ok: true, email: formatEmailOutput(row) })
-    }
-
-    if (action === 'mark_read') {
+    if (effect !== 'none') {
       invalidateAnalysisMemoryCache()
     }
 
-    return jsonResponse({ ok: true, email: formatEmailOutput(row) })
+    return jsonResponse({
+      ok: true,
+      message: buildPublicMessage(row, { includeSource }),
+    })
   } catch (error) {
-    logError('Latest consume failed', error, { path, address, unreadOnly, action })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Message next failed', error, { path, address, unreadOnly, includeSource, effect })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailListRequest(request, env, url, path) {
+async function handleAdminMessageListRequest(request, env, url, path) {
+  const authFailure = ensureApiReadAccess(request, env)
+  if (authFailure) return authFailure
+
   const address = normalizeAddress(url.searchParams.get('address'))
   const sender = normalizeText(url.searchParams.get('sender'))
   const subject = normalizeText(url.searchParams.get('subject'))
@@ -202,13 +196,10 @@ async function handleEmailListRequest(request, env, url, path) {
   const end = parseDateParam(url.searchParams.get('end'))
   const sinceId = parseSinceId(url.searchParams.get('since_id'))
   const sortOrder = parseSortOrder(url.searchParams.get('sort'))
-  const limit = parseEmailLimit(url.searchParams.get('limit'))
-  const summaryOnly = url.searchParams.get('summary') === '1'
+  const limit = parseMessageLimit(url.searchParams.get('limit'))
 
   try {
-    const formatter = summaryOnly ? formatEmailSummary : formatEmailOutput
-    const fields = summaryOnly ? EMAIL_SUMMARY_FIELDS : EMAIL_DETAIL_FIELDS
-    const { sql, params } = buildEmailListQuery(fields, {
+    const { sql, params } = buildMessageListQuery(MESSAGE_SUMMARY_FIELDS, {
       address,
       sender,
       subject,
@@ -219,7 +210,7 @@ async function handleEmailListRequest(request, env, url, path) {
       sortOrder,
       limit,
     })
-    const { sql: countSql, params: countParams } = buildEmailCountQuery({
+    const { sql: countSql, params: countParams } = buildMessageCountQuery({
       address,
       sender,
       subject,
@@ -238,13 +229,15 @@ async function handleEmailListRequest(request, env, url, path) {
         .bind(...countParams)
         .first(),
     ])
-    const rows = out.results || []
-    const results = rows.map(formatter).filter(Boolean)
+
+    const rows = Array.isArray(out?.results) ? out.results : []
+    const messages = rows.map(formatMessageSummary).filter(Boolean)
+
     return jsonResponse({
       ok: true,
-      emails: results,
+      messages,
       result_info: {
-        count: results.length,
+        count: messages.length,
         total_count: Number(totalRow?.total || 0),
       },
       permissions: {
@@ -252,7 +245,10 @@ async function handleEmailListRequest(request, env, url, path) {
       },
     })
   } catch (error) {
-    logError('Email list query failed', error, {
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message list query failed', error, {
       path,
       address,
       sender,
@@ -263,88 +259,77 @@ async function handleEmailListRequest(request, env, url, path) {
       sinceId,
       sortOrder,
       limit,
-      summaryOnly,
     })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailSourceRequest(request, env, id, path) {
-  const authFailure = ensureAdminRequest(request, env)
+async function handleAdminMessageDetailGetRequest(request, env, id, path) {
+  const authFailure = ensureApiReadAccess(request, env)
   if (authFailure) return authFailure
 
   try {
-    const row = await selectEmailSourceRowById(env, id)
+    const row = await selectMessageRowById(env, id)
     if (!row) return jsonResponse({ ok: false, error: 'Not found' }, 404)
-
-    const source = buildEmailSource(row)
-    if (!source || !source.raw_available) {
-      return jsonResponse({ ok: false, error: 'Raw source unavailable' }, 404)
-    }
-
-    return jsonResponse({ ok: true, source })
+    return jsonResponse({ ok: true, message: buildAdminMessage(row) })
   } catch (error) {
-    logError('Email source query failed', error, { path, id })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message detail query failed', error, { path, id })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailDetailGetRequest(request, env, url, id, path) {
+async function handleAdminMessageDeleteRequest(request, env, id, path) {
+  const authFailure = ensureApiReadAccess(request, env)
+  if (authFailure) return authFailure
+
   try {
-    const row = await selectEmailRowById(env, id)
-    if (!row) return jsonResponse({ ok: false, error: 'Not found' }, 404)
-
-    const rich = url.searchParams.get('rich') === '1'
-    if (rich) {
-      const authFailure = ensureAdminRequest(request, env)
-      if (authFailure) return authFailure
-    }
-
-    const email = await buildEmailDetail(env, row, { rich, parseEmailFn: parseEmail })
-    return jsonResponse({ ok: true, email })
-  } catch (error) {
-    logError('Email detail query failed', error, { path, id })
-    return jsonResponse({ ok: false, error: 'Internal error' }, 500)
-  }
-}
-
-async function handleEmailDeleteRequest(request, env, id, path) {
-  try {
-    const authFailure = ensureApiReadAccess(request, env)
-    if (authFailure) return authFailure
-
-    const existing = await selectEmailRecipientById(env, id)
+    const existing = await selectMessageRecipientById(env, id)
     if (!existing) return jsonResponse({ ok: false, error: 'Not found' }, 404)
 
-    await deleteEmailById(env, id)
-    await invalidateRichDetailCache(env, id)
+    await deleteMessageById(env, id)
     invalidateAnalysisMemoryCache()
-
     return jsonResponse({ ok: true, deleted: String(id) })
   } catch (error) {
-    logError('Email delete failed', error, { path, id })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message delete failed', error, { path, id })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailBatchDeleteRequest(request, env, path) {
+async function handleAdminMessageDetailRequest(request, env, path, id) {
+  if (request.method === 'GET') {
+    return handleAdminMessageDetailGetRequest(request, env, id, path)
+  }
+
+  if (request.method === 'DELETE') {
+    return handleAdminMessageDeleteRequest(request, env, id, path)
+  }
+
+  return methodNotAllowed(['GET', 'DELETE'])
+}
+
+async function handleAdminMessageBatchDeleteRequest(request, env, path) {
   const authFailure = ensureApiReadAccess(request, env)
   if (authFailure) return authFailure
 
   const { ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
-    'Email batch delete'
+    'Admin message batch delete'
   )
   if (errorResponse) return errorResponse
 
   try {
-    const rows = await selectEmailRecipientsByIds(env, ids)
+    const rows = await selectMessageRecipientsByIds(env, ids)
     const existingIds = new Set(rows.map((row) => Number(row.id)))
 
     if (rows.length > 0) {
-      await deleteEmailsByIds(env, ids)
-      await Promise.all(rows.map((row) => invalidateRichDetailCache(env, row.id)))
+      await deleteMessagesByIds(env, ids)
       invalidateAnalysisMemoryCache()
     }
 
@@ -358,99 +343,101 @@ async function handleEmailBatchDeleteRequest(request, env, path) {
       deleted_count: deleted.length,
     })
   } catch (error) {
-    logError('Email batch delete failed', error, { path, ids: ids.join(',') })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message batch delete failed', error, { path, ids: ids.join(',') })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailDetailRequest(request, env, url, path, id) {
-  if (request.method === 'GET') {
-    return handleEmailDetailGetRequest(request, env, url, id, path)
-  }
-
-  if (request.method === 'DELETE') {
-    return handleEmailDeleteRequest(request, env, id, path)
-  }
-
-  return methodNotAllowed(['GET', 'DELETE'])
-}
-
-async function handleEmailReadRequest(request, env, path) {
+async function handleAdminMessageReadRequest(request, env, path) {
   const authFailure = ensureApiReadAccess(request, env)
   if (authFailure) return authFailure
 
   const { payload, ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
-    'Email read'
+    'Admin message read'
   )
   if (errorResponse) return errorResponse
 
-  const readValue = payload?.read === 0 ? 0 : 1
+  const readValue = parseBooleanFlag(payload?.read, true)
+  if (readValue == null) {
+    return jsonResponse({ ok: false, error: 'Invalid read' }, 400)
+  }
 
   try {
-    const result = await updateEmailReadState(env, ids, readValue)
+    const result = await updateMessageReadState(env, ids, readValue)
     invalidateAnalysisMemoryCache()
     return jsonResponse({ ok: true, updated: result?.meta?.changes || 0 })
   } catch (error) {
-    logError('Email read update failed', error, { path, ids: ids.join(',') })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message read update failed', error, { path, ids: ids.join(',') })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-async function handleEmailStarRequest(request, env, path) {
+async function handleAdminMessageStarRequest(request, env, path) {
   const authFailure = ensureAdminRequest(request, env)
   if (authFailure) return authFailure
 
   const { payload, ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
-    'Email star'
+    'Admin message star'
   )
   if (errorResponse) return errorResponse
 
-  const starredValue = payload?.starred === 0 ? 0 : 1
+  const starredValue = parseBooleanFlag(payload?.starred, true)
+  if (starredValue == null) {
+    return jsonResponse({ ok: false, error: 'Invalid starred' }, 400)
+  }
 
   try {
-    const result = await updateEmailStarState(env, ids, starredValue)
+    const result = await updateMessageStarState(env, ids, starredValue)
     invalidateAnalysisMemoryCache()
     return jsonResponse({ ok: true, updated: result?.meta?.changes || 0 })
   } catch (error) {
-    logError('Email star update failed', error, { path, ids: ids.join(',') })
+    if (isMessagesTableMissing(error)) {
+      return missingMessagesTableResponse()
+    }
+    logError('Admin message star update failed', error, { path, ids: ids.join(',') })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
-// API 路由拆成独立 handler，降低 `fetch()` 分支深度并便于后续继续扩展。
 export async function handleApiRequest(request, env, url, path) {
-  if (path === '/api/latest/consume') {
+  if (path === '/api/messages/next') {
     if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleLatestConsumeRequest(request, env, path)
+    return handleMessagesNextRequest(request, env, path)
   }
 
-  if (path === '/api/latest') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleLatestRequest(env, url, path)
-  }
-
-  if (path === '/api/emails') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleEmailListRequest(request, env, url, path)
-  }
-
-  if (path === '/api/emails/read') {
-    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
-    return handleEmailReadRequest(request, env, path)
-  }
-
-  if (path === '/api/emails/star') {
-    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
-    return handleEmailStarRequest(request, env, path)
-  }
-
-  if (path === '/api/emails/delete') {
+  if (path === '/api/mailboxes') {
     if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleEmailBatchDeleteRequest(request, env, path)
+    return handleMailboxCreateRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/messages') {
+    if (request.method !== 'GET') return methodNotAllowed(['GET'])
+    return handleAdminMessageListRequest(request, env, url, path)
+  }
+
+  if (path === '/api/admin/messages/read') {
+    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
+    return handleAdminMessageReadRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/messages/star') {
+    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
+    return handleAdminMessageStarRequest(request, env, path)
+  }
+
+  if (path === '/api/admin/messages/delete') {
+    if (request.method !== 'POST') return methodNotAllowed(['POST'])
+    return handleAdminMessageBatchDeleteRequest(request, env, path)
   }
 
   if (path === '/api/analysis/summary') {
@@ -522,20 +509,14 @@ export async function handleApiRequest(request, env, url, path) {
     return handleCleanupRulesRunRequest(request, env, path)
   }
 
-  if (path === '/api/addresses/generate') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleGeneratedAddressRequest(request, env, path)
-  }
-
-  const emailSourceMatch = path.match(/^\/api\/emails\/(\d+)\/source$/)
-  if (emailSourceMatch) {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleEmailSourceRequest(request, env, parseInt(emailSourceMatch[1], 10), path)
-  }
-
-  const emailDetailMatch = path.match(/^\/api\/emails\/(\d+)$/)
-  if (emailDetailMatch) {
-    return handleEmailDetailRequest(request, env, url, path, parseInt(emailDetailMatch[1], 10))
+  const adminMessageDetailMatch = path.match(/^\/api\/admin\/messages\/(\d+)$/)
+  if (adminMessageDetailMatch) {
+    return handleAdminMessageDetailRequest(
+      request,
+      env,
+      path,
+      parseInt(adminMessageDetailMatch[1], 10)
+    )
   }
 
   const managedDomainMatch = path.match(/^\/api\/admin\/domains\/([^/]+)$/)

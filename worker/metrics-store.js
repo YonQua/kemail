@@ -1,4 +1,5 @@
 import { AUTO_CLEAN_DAYS, DAY_IN_MS } from './constants.js'
+import { MESSAGE_TABLE } from './email-store.js'
 import { normalizeText } from './text-core.js'
 
 const COMMON_SECOND_LEVEL_DOMAINS = new Set(['ac', 'co', 'com', 'edu', 'gov', 'net', 'org'])
@@ -103,12 +104,14 @@ export async function incrementReceivedMetrics(env, { receivedAt, sender }) {
 }
 
 export async function readCurrentMailboxSummary(env) {
-  const currentTotalRow = await env.DB.prepare('SELECT COUNT(*) as total FROM emails').first()
+  const currentTotalRow = await env.DB.prepare(
+    `SELECT COUNT(*) as total FROM ${MESSAGE_TABLE}`
+  ).first()
   const unreadRow = await env.DB.prepare(
-    'SELECT COUNT(*) as total FROM emails WHERE is_read = 0'
+    `SELECT COUNT(*) as total FROM ${MESSAGE_TABLE} WHERE is_read = 0`
   ).first()
   const starredRow = await env.DB.prepare(
-    'SELECT COUNT(*) as total FROM emails WHERE is_starred = 1'
+    `SELECT COUNT(*) as total FROM ${MESSAGE_TABLE} WHERE is_starred = 1`
   ).first()
 
   return {

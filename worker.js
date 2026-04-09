@@ -12,6 +12,12 @@ import {
   RAW_EMAIL_SOURCE_SKIPPED_NOTICE,
   RAW_EMAIL_TOO_LARGE_NOTICE,
 } from './worker/constants.js'
+import { insertMessage, MESSAGE_TABLE } from './worker/email-store.js'
+import {
+  buildStoredMessageForOversizedRaw,
+  buildStoredMessageForPartialParse,
+  normalizeIncomingEmail,
+} from './worker/message-content.js'
 import {
   isStaticAssetPath,
   isStaticDocumentPath,
@@ -22,14 +28,14 @@ import {
 import { executeScheduledGovernance } from './worker/mail-governance-executor.js'
 import { GovernanceTablesMissingError } from './worker/mail-governance-store.js'
 import { incrementReceivedMetrics } from './worker/metrics-store.js'
-import { decodeRawEmailBytes, parseEmail, readRawEmailBytes } from './worker/parser.js'
+import { decodeRawEmailBytes, readRawEmailBytes } from './worker/parser.js'
 import { handleStaticAssetRequest, handleStaticDocumentRequest } from './worker/static-assets.js'
 import { appendReadableNotice, normalizeAddress } from './worker/text-core.js'
 import { logError } from './worker/text-logging.js'
 
-async function runLegacyRetentionCleanup(env) {
+async function runFallbackRetentionCleanup(env) {
   const cutoffIso = new Date(Date.now() - AUTO_CLEAN_DAYS * DAY_IN_MS).toISOString()
-  const result = await env.DB.prepare('DELETE FROM emails WHERE received_at < ?')
+  const result = await env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE received_at < ?`)
     .bind(cutoffIso)
     .run()
   const deleted = result.meta.changes || 0
@@ -55,43 +61,56 @@ export default {
 
     try {
       const rawEmail = await readRawEmailBytes(message.raw, MAX_RAW_EMAIL_BYTES)
-      let sender = fallbackSender
-      let subject = fallbackSubject
-      let rawBody = null
-      let bodyReadable = ''
+      const receivedAt = new Date().toISOString()
+      let storedMessage = null
 
       if (rawEmail.truncated) {
-        bodyReadable = RAW_EMAIL_TOO_LARGE_NOTICE
+        storedMessage = buildStoredMessageForOversizedRaw({
+          recipient,
+          sender: fallbackSender,
+          subject: fallbackSubject,
+          receivedAt,
+          notice: RAW_EMAIL_TOO_LARGE_NOTICE,
+          parseStatus: 'too_large',
+        })
       } else {
-        const decodedRawBody = decodeRawEmailBytes(rawEmail.bytes)
+        const rawSource = decodeRawEmailBytes(rawEmail.bytes)
         const canParseBody = rawEmail.byteLength <= MAX_PARSE_EMAIL_BYTES
         const canStoreSource = rawEmail.byteLength <= MAX_STORED_SOURCE_BYTES
 
         if (canParseBody) {
-          const parsed = await parseEmail(decodedRawBody, fallbackSender, fallbackSubject)
-          sender = parsed.sender
-          subject = parsed.subject
-          bodyReadable = parsed.bodyReadable
+          const normalized = await normalizeIncomingEmail(rawSource, fallbackSender, fallbackSubject)
+          storedMessage = {
+            recipient,
+            ...normalized,
+            raw_source: canStoreSource ? normalized.raw_source : '',
+            source_available: canStoreSource ? 1 : 0,
+            source_truncated: canStoreSource ? 0 : 1,
+            parse_status: canStoreSource ? 'parsed' : 'parsed_source_truncated',
+            received_at: receivedAt,
+          }
         } else {
-          bodyReadable = RAW_EMAIL_PARSE_SKIPPED_NOTICE
-        }
-
-        if (canStoreSource) {
-          rawBody = decodedRawBody
-        } else {
-          bodyReadable = appendReadableNotice(bodyReadable, RAW_EMAIL_SOURCE_SKIPPED_NOTICE)
+          const readableNotice = canStoreSource
+            ? RAW_EMAIL_PARSE_SKIPPED_NOTICE
+            : appendReadableNotice(RAW_EMAIL_PARSE_SKIPPED_NOTICE, RAW_EMAIL_SOURCE_SKIPPED_NOTICE)
+          storedMessage = buildStoredMessageForPartialParse({
+            recipient,
+            sender: fallbackSender,
+            subject: fallbackSubject,
+            receivedAt,
+            rawSource,
+            textBody: readableNotice,
+            sourceAvailable: canStoreSource,
+            sourceTruncated: !canStoreSource,
+            parseStatus: canStoreSource ? 'parse_skipped' : 'parse_skipped_source_truncated',
+          })
         }
       }
 
-      const receivedAt = new Date().toISOString()
-
-      const insert = env.DB.prepare(
-        'INSERT INTO emails (recipient, sender, subject, body, body_readable, received_at) VALUES (?, ?, ?, ?, ?, ?)'
-      )
-      await insert.bind(recipient, sender, subject, rawBody, bodyReadable || null, receivedAt).run()
+      await insertMessage(env, storedMessage)
       await incrementReceivedMetrics(env, {
         receivedAt,
-        sender,
+        sender: storedMessage.sender,
       })
       invalidateAnalysisMemoryCache()
     } catch (err) {
@@ -111,7 +130,6 @@ export default {
     const isStaticAsset = isStaticAssetPath(path)
     const isApiRequest = path.startsWith('/api/')
 
-    // 管理页与静态资源都是站内受控流量，继续让它们经过 KV 限流会把免费额度浪费在页面加载上。
     if (isStaticDocument) {
       return handleStaticDocumentRequest(request, env)
     }
@@ -134,7 +152,6 @@ export default {
     if (isApiRequest) {
       const authFailure = ensureApiReadAccess(request, env)
       if (authFailure) {
-        // 只对未鉴权 API 请求做 KV 限流，保留暴力探测防护，同时避免后台正常轮询持续消耗 KV。
         if (!(await checkRateLimit(request, env, 'unauthorized'))) {
           return jsonResponse({ ok: false, error: 'Too many requests' }, 429)
         }
@@ -143,7 +160,6 @@ export default {
 
       const token = getBearerToken(request)
       const rateLimitPolicy = authenticatedRateLimitPolicy(request, url, path)
-      // 已鉴权请求改为进程内限流，避免高频业务读链路持续写入 Workers KV。
       if (!(await checkRateLimit(request, env, { ...rateLimitPolicy, token }))) {
         return jsonResponse({ ok: false, error: 'Too many requests' }, 429)
       }
@@ -166,14 +182,14 @@ export default {
     } catch (err) {
       if (err instanceof GovernanceTablesMissingError) {
         try {
-          const legacy = await runLegacyRetentionCleanup(env)
-          if (legacy.deleted > 0) {
+          const fallback = await runFallbackRetentionCleanup(env)
+          if (fallback.deleted > 0) {
             invalidateAnalysisMemoryCache()
-            console.log(`[定时清理] 已删除 ${legacy.deleted} 封超过 ${AUTO_CLEAN_DAYS} 天的旧邮件`)
+            console.log(`[定时清理] 已删除 ${fallback.deleted} 封超过 ${AUTO_CLEAN_DAYS} 天的旧邮件`)
           }
           return
-        } catch (legacyError) {
-          logError('Scheduled legacy cleanup failed', legacyError, {
+        } catch (fallbackError) {
+          logError('Scheduled fallback cleanup failed', fallbackError, {
             autoCleanDays: AUTO_CLEAN_DAYS,
           })
           return

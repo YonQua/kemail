@@ -34,21 +34,6 @@ export function resolveStaticAssetPath(path) {
   return STATIC_DOCUMENT_PATHS.get(path) || path
 }
 
-export function resolveManagedAssetFallbackPath(pathname) {
-  if (/^\/assets\/ui-foundation\.[a-f0-9]{10}\.css$/i.test(pathname))
-    return '/assets/ui-foundation.latest.css'
-  if (/^\/assets\/manage\.[a-f0-9]{10}\.css$/i.test(pathname)) return '/assets/manage.latest.css'
-  if (/^\/assets\/manage\.[a-f0-9]{10}\.js$/i.test(pathname)) return '/assets/manage.latest.js'
-  if (/^\/assets\/api-docs\.[a-f0-9]{10}\.css$/i.test(pathname))
-    return '/assets/api-docs.latest.css'
-  if (/^\/assets\/api-docs\.[a-f0-9]{10}\.js$/i.test(pathname)) return '/assets/api-docs.latest.js'
-  if (/^\/assets\/vendor-chart\.[a-f0-9]{10}\.js$/i.test(pathname))
-    return '/assets/vendor-chart.latest.js'
-  if (/^\/assets\/vendor-alpine\.[a-f0-9]{10}\.js$/i.test(pathname))
-    return '/assets/vendor-alpine.latest.js'
-  return ''
-}
-
 export function getStaticAssetHeaders(pathname) {
   if (pathname === '/' || pathname.endsWith('.html')) {
     return {

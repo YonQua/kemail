@@ -11,23 +11,33 @@ import {
   normalizeTextLinkUrl,
 } from './text-link-url.js'
 
-export function extractActionLinks(html) {
-  if (!html || typeof html !== 'string') return []
+const SUPPORTED_HTML_HREF_TAGS = new Set(['a', 'area', 'button', 'v:roundrect', 'v:rect'])
+
+function collectHtmlHrefCandidates(content) {
+  const html = typeof content === 'string' ? content : ''
+  if (!html) return []
 
   const candidates = []
-  const anchorRegex = /<a\b([^>]*?)href=(['"])(.*?)\2([^>]*)>([\s\S]*?)<\/a>/gi
   const totalLength = html.length || 1
+  const hrefTagRegex =
+    /<([a-z0-9:_-]+)\b([^>]*?)href=(['"])(.*?)\3([^>]*)>([\s\S]*?)<\/\1>/gi
   let match = null
 
-  while ((match = anchorRegex.exec(html))) {
-    const url = normalizeHtmlHref(match[3])
+  while ((match = hrefTagRegex.exec(html))) {
+    const tagName = String(match[1] || '').toLowerCase()
+    if (!SUPPORTED_HTML_HREF_TAGS.has(tagName)) continue
+
+    const url = normalizeHtmlHref(match[4])
     if (!url) continue
 
-    const rawLabel = compactDisplayText(stripHtml(match[5] || ''))
+    const rawLabel = compactDisplayText(stripHtml(match[6] || ''))
     const label = normalizeActionLinkLabel(rawLabel, url)
-    const attrs = `${match[1] || ''} ${match[4] || ''}`
+    const attrs = `${match[2] || ''} ${match[5] || ''}`
     const isButton =
-      /\b(btn|button)\b/i.test(attrs) || /background-color|role\s*=\s*["']?button/i.test(attrs)
+      tagName === 'button' ||
+      tagName.startsWith('v:') ||
+      /\b(btn|button)\b/i.test(attrs) ||
+      /background-color|role\s*=\s*["']?button/i.test(attrs)
     const context = compactDisplayText(
       stripHtml(
         decodeBasicEntities(
@@ -35,6 +45,7 @@ export function extractActionLinks(html) {
         )
       )
     )
+
     candidates.push({
       label,
       url,
@@ -45,7 +56,12 @@ export function extractActionLinks(html) {
     })
   }
 
-  return rankActionLinks(candidates)
+  return candidates
+}
+
+export function extractActionLinks(html) {
+  if (!html || typeof html !== 'string') return []
+  return rankActionLinks(collectHtmlHrefCandidates(html))
 }
 
 export function extractActionLinksFromRawSource(rawSource) {
@@ -54,38 +70,7 @@ export function extractActionLinksFromRawSource(rawSource) {
   const source = decodeQuotedPrintableForLinkExtraction(rawSource)
   const bodyMatch = source.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)
   const content = bodyMatch ? bodyMatch[1] : source
-  const totalLength = content.length || 1
-  const candidates = []
-  const anchorRegex = /<a\b([^>]*?)href=(['"])(.*?)\2([^>]*)>([\s\S]*?)<\/a>/gi
-  let match = null
-
-  while ((match = anchorRegex.exec(content))) {
-    const url = normalizeHtmlHref(match[3])
-    if (!url) continue
-
-    const rawLabel = compactDisplayText(stripHtml(decodeBasicEntities(match[5] || '')))
-    const label = normalizeActionLinkLabel(rawLabel, url)
-    const attrs = `${match[1] || ''} ${match[4] || ''}`
-    const isButton =
-      /\b(btn|button)\b/i.test(attrs) || /background-color|role\s*=\s*["']?button/i.test(attrs)
-    const context = compactDisplayText(
-      stripHtml(
-        decodeBasicEntities(
-          content.slice(Math.max(0, match.index - 180), match.index + match[0].length + 180)
-        )
-      )
-    )
-    candidates.push({
-      label,
-      url,
-      order: candidates.length,
-      positionRatio: Math.min(1, match.index / totalLength),
-      context,
-      isButton,
-    })
-  }
-
-  return rankActionLinks(candidates)
+  return rankActionLinks(collectHtmlHrefCandidates(content))
 }
 
 export function extractActionLinksFromText(text) {

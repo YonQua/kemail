@@ -5,8 +5,8 @@ import {
   AUTH_RATE_WINDOW,
   RATE_LIMIT,
   RATE_WINDOW,
-  RICH_DETAIL_RATE_LIMIT,
-  RICH_DETAIL_RATE_WINDOW,
+  SOURCE_HEAVY_RATE_LIMIT,
+  SOURCE_HEAVY_RATE_WINDOW,
   WRITE_RATE_LIMIT,
   WRITE_RATE_WINDOW,
 } from './constants.js'
@@ -101,7 +101,6 @@ export async function checkRateLimit(request, env, scope = 'api') {
   const identity = await buildRateLimitIdentity(request, options.token)
   const key = `ratelimit:${options.scope}:${identity}`
 
-  // 已鉴权请求改用进程内限流，避免 Cloudflare Workers KV 免费层 put 被高频读请求耗尽。
   if (options.storage === 'memory') {
     const store = getMemoryRateLimitStore(env)
     const now = Date.now()
@@ -121,32 +120,26 @@ export async function checkRateLimit(request, env, scope = 'api') {
   return true
 }
 
-export function authenticatedRateLimitPolicy(request, url, path) {
+export function authenticatedRateLimitPolicy(request, _url, path) {
   const method = request.method
   const isAnalysisPath = path.startsWith('/api/analysis/')
-  const isGovernanceReadPath =
-    path === '/api/admin/governance/settings' ||
-    path === '/api/admin/governance/status' ||
-    path === '/api/admin/cleanup-rules' ||
-    path === '/api/admin/cleanup-rules/preview' ||
-    /^\/api\/admin\/cleanup-rules\/\d+$/.test(path)
-  const isGovernanceWritePath =
+  const isAdminMessageDetailPath = /^\/api\/admin\/messages\/\d+$/.test(path)
+  const isWritePath =
+    path === '/api/messages/next' ||
+    method === 'DELETE' ||
+    path === '/api/admin/messages/delete' ||
+    path === '/api/admin/messages/read' ||
+    path === '/api/admin/messages/star' ||
+    path === '/api/admin/domains/sync' ||
+    path === '/api/admin/domains/batch' ||
     path === '/api/admin/governance/settings' ||
     path === '/api/admin/governance/retention/run' ||
     path === '/api/admin/cleanup-rules' ||
     path === '/api/admin/cleanup-rules/run' ||
+    /^\/api\/admin\/domains\/[^/]+$/.test(path) ||
     /^\/api\/admin\/cleanup-rules\/\d+$/.test(path) ||
     /^\/api\/admin\/cleanup-rules\/\d+\/run$/.test(path)
-  const isWritePath =
-    method === 'DELETE' ||
-    path === '/api/latest/consume' ||
-    path === '/api/emails/delete' ||
-    path === '/api/emails/read' ||
-    path === '/api/emails/star' ||
-    (isGovernanceWritePath && method !== 'GET')
-  const isRichPath =
-    /^\/api\/emails\/\d+\/source$/.test(path) ||
-    (/^\/api\/emails\/\d+$/.test(path) && url.searchParams.get('rich') === '1')
+  const isSourceHeavyPath = isAdminMessageDetailPath
 
   if (isAnalysisPath) {
     return {
@@ -157,11 +150,11 @@ export function authenticatedRateLimitPolicy(request, url, path) {
     }
   }
 
-  if (isRichPath) {
+  if (isSourceHeavyPath) {
     return {
-      scope: 'authorized-rich',
-      limit: RICH_DETAIL_RATE_LIMIT,
-      windowSeconds: RICH_DETAIL_RATE_WINDOW,
+      scope: 'authorized-source-heavy',
+      limit: SOURCE_HEAVY_RATE_LIMIT,
+      windowSeconds: SOURCE_HEAVY_RATE_WINDOW,
       storage: 'memory',
     }
   }
@@ -171,15 +164,6 @@ export function authenticatedRateLimitPolicy(request, url, path) {
       scope: 'authorized-write',
       limit: WRITE_RATE_LIMIT,
       windowSeconds: WRITE_RATE_WINDOW,
-      storage: 'memory',
-    }
-  }
-
-  if (isGovernanceReadPath) {
-    return {
-      scope: 'authorized-read',
-      limit: AUTH_RATE_LIMIT,
-      windowSeconds: AUTH_RATE_WINDOW,
       storage: 'memory',
     }
   }

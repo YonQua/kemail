@@ -1,5 +1,5 @@
 import { AUTO_CLEAN_DAYS, DEFAULT_CLEANUP_RULE_DELETE_BATCH_SIZE } from './constants.js'
-import { clearRichDetailMemoryCache, deleteEmailsByIds } from './email-store.js'
+import { MESSAGE_TABLE, deleteMessagesByIds } from './email-store.js'
 import {
   GovernanceTablesMissingError,
   hasCleanupRuleMatcher,
@@ -47,7 +47,7 @@ function buildCleanupRuleWhere(rule) {
 }
 
 async function countEmailsByWhereClause(env, whereClause, params) {
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS total FROM emails ${whereClause}`)
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS total FROM ${MESSAGE_TABLE} ${whereClause}`)
     .bind(...params)
     .first()
   return Number(row?.total || 0)
@@ -55,7 +55,7 @@ async function countEmailsByWhereClause(env, whereClause, params) {
 
 async function listEmailIdsByWhereClause(env, whereClause, params, limit) {
   const out = await env.DB.prepare(
-    `SELECT id FROM emails ${whereClause} ORDER BY received_at DESC LIMIT ?`
+    `SELECT id FROM ${MESSAGE_TABLE} ${whereClause} ORDER BY received_at DESC, id DESC LIMIT ?`
   )
     .bind(...params, limit)
     .all()
@@ -96,13 +96,10 @@ export async function executeRetentionCleanup(env, options = {}) {
     }
   }
 
-  const result = await env.DB.prepare('DELETE FROM emails WHERE received_at < ?')
+  const result = await env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE received_at < ?`)
     .bind(cutoffIso)
     .run()
   const deletedCount = Number(result?.meta?.changes || 0)
-  if (deletedCount > 0) {
-    await clearRichDetailMemoryCache(env)
-  }
 
   await updateGovernanceRetentionStatus(env, {
     retention_last_run_at: triggeredAt,
@@ -157,14 +154,11 @@ export async function executeCleanupRule(env, rule, options = {}) {
   while (true) {
     const ids = await listEmailIdsByWhereClause(env, whereClause, params, batchSize)
     if (ids.length === 0) break
-    await deleteEmailsByIds(env, ids)
+    await deleteMessagesByIds(env, ids)
     deletedCount += ids.length
     if (ids.length < batchSize) break
   }
 
-  if (deletedCount > 0) {
-    await clearRichDetailMemoryCache(env)
-  }
 
   if (persistRuleStatus && rule?.id) {
     await updateCleanupRuleRunStatus(env, rule.id, {

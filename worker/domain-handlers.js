@@ -229,7 +229,7 @@ export async function handleManagedDomainBatchPolicyRequest(request, env, path) 
   }
 }
 
-export async function handleGeneratedAddressRequest(request, env, path) {
+export async function handleMailboxCreateRequest(request, env, path) {
   const authFailure = ensureExternalIssueRequest(request, env)
   if (authFailure) return authFailure
 
@@ -245,10 +245,12 @@ export async function handleGeneratedAddressRequest(request, env, path) {
 
     return jsonResponse({
       ok: true,
-      email: `${localPart}@${domain}`,
-      domain,
-      local_part: localPart,
-      issued_at: issuedAt,
+      mailbox: {
+        address: `${localPart}@${domain}`,
+        domain,
+        local_part: localPart,
+        issued_at: issuedAt,
+      },
     })
   } catch (error) {
     if (isManagedDomainsTableMissing(error)) {
