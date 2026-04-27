@@ -21,6 +21,112 @@ const ACTION_LINK_KEEP_LIMIT = 10
 const ACTION_LINK_MIN_SCORE = 6
 const GOVERNANCE_REFRESH_INTERVAL_MS = 20 * 1000
 const DEFAULT_GOVERNANCE_RETENTION_DAYS = 3
+const MAIL_PAGE_SIZE = 50
+const AUTH_STORAGE_VERSION = 1
+const AUTH_STORAGE_KEYS = Object.freeze({
+  session: 'kemail.console.auth.session',
+  persistent: 'kemail.console.auth.persistent',
+})
+
+function createDefaultStatsState() {
+  return {
+    totalReceived: 0,
+    currentTotal: 0,
+    todayReceived: 0,
+    last7DaysReceived: 0,
+    unread: 0,
+    starred: 0,
+    end: '',
+    historyStartDay: '',
+    retentionDays: 0,
+    dayBucketTimezone: 'UTC',
+  }
+}
+
+function buildStoredAuthPayload(token) {
+  return JSON.stringify({
+    version: AUTH_STORAGE_VERSION,
+    token: String(token || ''),
+  })
+}
+
+function parseStoredAuthPayload(rawValue) {
+  if (typeof rawValue !== 'string' || !rawValue.trim()) return ''
+
+  try {
+    const parsed = JSON.parse(rawValue)
+    if (parsed?.version !== AUTH_STORAGE_VERSION) return ''
+    return String(parsed?.token || '').trim()
+  } catch (_) {
+    return ''
+  }
+}
+
+function readStorageAuthToken(storage, key) {
+  try {
+    return parseStoredAuthPayload(storage?.getItem(key) || '')
+  } catch (_) {
+    return ''
+  }
+}
+
+function writeStorageAuthToken(storage, key, token) {
+  try {
+    storage?.setItem(key, buildStoredAuthPayload(token))
+  } catch (_) {}
+}
+
+function removeStorageAuthToken(storage, key) {
+  try {
+    storage?.removeItem(key)
+  } catch (_) {}
+}
+
+function clearStoredAuthTokens() {
+  removeStorageAuthToken(window.sessionStorage, AUTH_STORAGE_KEYS.session)
+  removeStorageAuthToken(window.localStorage, AUTH_STORAGE_KEYS.persistent)
+}
+
+function readStoredAuthToken() {
+  const sessionToken = readStorageAuthToken(window.sessionStorage, AUTH_STORAGE_KEYS.session)
+  if (sessionToken) {
+    return {
+      token: sessionToken,
+      remember: false,
+      source: 'session',
+    }
+  }
+
+  const persistentToken = readStorageAuthToken(window.localStorage, AUTH_STORAGE_KEYS.persistent)
+  if (persistentToken) {
+    return {
+      token: persistentToken,
+      remember: true,
+      source: 'persistent',
+    }
+  }
+
+  return null
+}
+
+function persistStoredAuthToken(token, remember) {
+  clearStoredAuthTokens()
+  const normalizedToken = String(token || '').trim()
+  if (!normalizedToken) return
+
+  writeStorageAuthToken(window.sessionStorage, AUTH_STORAGE_KEYS.session, normalizedToken)
+  if (remember) {
+    writeStorageAuthToken(window.localStorage, AUTH_STORAGE_KEYS.persistent, normalizedToken)
+  }
+}
+
+function isCredentialRejectedError(error) {
+  const status = Number(error?.status || 0)
+  if (status === 401 || status === 403) return true
+
+  const message = String(error?.message || '').trim()
+  return message === 'Unauthorized' || message === 'Admin access required'
+}
 
 function createDefaultGovernanceSettings() {
   return {
@@ -350,11 +456,37 @@ function compactBodyTextValue(text) {
   return cleaned || '提取纯文本失败...'
 }
 
+function normalizeMailPageInfo(data = {}) {
+  const pageInfo = data?.page_info || {}
+  return {
+    count: Number(pageInfo.count || 0),
+    totalCount: Number(pageInfo.total_count || 0),
+    hasMore: pageInfo.has_more === true,
+    nextCursor: String(pageInfo.next_cursor || ''),
+  }
+}
+
+function mergeMailSummaries(existing = [], incoming = []) {
+  const merged = []
+  const seenIds = new Set()
+
+  for (const mail of [...existing, ...incoming]) {
+    const id = Number(mail?.id || 0)
+    if (!id || seenIds.has(id)) continue
+    seenIds.add(id)
+    merged.push(mail)
+  }
+
+  return merged
+}
+
 function createMailAppState() {
   return {
     // Global App State
     authorized: false,
     authInput: '',
+    authInputVisible: false,
+    authRememberChoice: false,
     authError: '',
     authLoading: false,
     globalNotice: '',
@@ -366,18 +498,7 @@ function createMailAppState() {
     isMobileDrawerOpen: false,
 
     // Data State
-    stats: {
-      totalReceived: 0,
-      currentTotal: 0,
-      todayReceived: 0,
-      last7DaysReceived: 0,
-      unread: 0,
-      starred: 0,
-      end: '',
-      historyStartDay: '',
-      retentionDays: 0,
-      dayBucketTimezone: 'UTC',
-    },
+    stats: createDefaultStatsState(),
     adminAccessAvailable: false,
     managedDomains: [],
     domainsLoading: false,
@@ -435,6 +556,11 @@ function createMailAppState() {
     filterStarred: false,
     selectedIds: [],
     isRefreshing: false,
+    mailLoadingMore: false,
+    mailNextCursor: '',
+    mailHasMore: false,
+    mailListReachedEnd: false,
+    mailRequestToken: 0,
     refreshHint: '',
     refreshHintTimer: null,
     mailServerTotal: 0,
@@ -452,7 +578,10 @@ function createMailAppState() {
 
     init() {
       this.authInput = ''
+      this.authInputVisible = false
+      this.authRememberChoice = false
       this.resetGovernanceState()
+      this.restoreStoredAuthSession()
     },
 
     resetGovernanceState() {
@@ -481,48 +610,9 @@ function createMailAppState() {
 
     // --- Authentication --- //
 
-    async login() {
-      if (this.authLoading) return
-      this.authError = ''
-      const trimmedKey = this.authInput.trim()
-      if (!trimmedKey) {
-        this.authError = '请输入 API Key'
-        return
-      }
-      this.authInput = trimmedKey
-      this.authLoading = true
-      try {
-        // 用内部消息列表验证鉴权，同时读取当前 key 是否具备管理员能力。
-        const data = await this.apiFetch('/api/admin/messages?limit=1')
-        this.adminAccessAvailable = Boolean(data?.permissions?.admin)
-        this.authorized = true
-        this.loadInitialData()
-      } catch (e) {
-        this.authorized = false
-        this.authError = '验证失败，API Key 可能不正确'
-      } finally {
-        this.authLoading = false
-      }
-    },
-
-    logout() {
-      this.authorized = false
-      this.authInput = ''
-      this.authError = ''
-      this.authLoading = false
+    resetWorkspaceState() {
       this.clearGlobalNotice()
-      this.stats = {
-        totalReceived: 0,
-        currentTotal: 0,
-        todayReceived: 0,
-        last7DaysReceived: 0,
-        unread: 0,
-        starred: 0,
-        end: '',
-        historyStartDay: '',
-        retentionDays: 0,
-        dayBucketTimezone: 'UTC',
-      }
+      this.stats = createDefaultStatsState()
       this.statsNeedsRefresh = false
       this.statsLastLoadedAt = 0
       this.statsMigrationRequired = false
@@ -554,12 +644,115 @@ function createMailAppState() {
       this.activeTab = 'inbox'
       this.activeMail = null
       this.activeMailDetail = null
+      this.mailLoadingMore = false
+      this.mailNextCursor = ''
+      this.mailHasMore = false
+      this.mailListReachedEnd = false
+      this.mailRequestToken = 0
+      this.mailServerTotal = 0
       const docsRoot = this.$refs?.docsRoot
       if (docsRoot) docsRoot.innerHTML = ''
     },
 
+    persistAuthSession() {
+      persistStoredAuthToken(this.authInput, this.authRememberChoice)
+    },
+
+    clearAuthSession() {
+      clearStoredAuthTokens()
+    },
+
+    async restoreStoredAuthSession() {
+      const storedAuth = readStoredAuthToken()
+      if (!storedAuth?.token) return
+
+      this.authInput = storedAuth.token
+      this.authRememberChoice = storedAuth.remember
+      const restored = await this.login({
+        silent: true,
+        skipWorkspaceReset: true,
+        failureMessage: '已保存的密钥已失效，请重新输入',
+      })
+      if (!restored && !readStoredAuthToken()) {
+        this.authInput = ''
+      }
+    },
+
+    async login(options = {}) {
+      if (this.authLoading) return
+      const silent = options.silent === true
+      this.authError = ''
+      const trimmedKey = this.authInput.trim()
+      if (!trimmedKey) {
+        if (!silent) {
+          this.authError = '请输入 API Key'
+        }
+        return false
+      }
+      this.authInput = trimmedKey
+      this.authLoading = true
+      try {
+        // 用内部消息列表验证鉴权，同时读取当前 key 是否具备管理员能力。
+        const data = await this.apiFetch('/api/admin/messages?limit=1')
+        this.adminAccessAvailable = Boolean(data?.permissions?.admin)
+        this.authorized = true
+        this.persistAuthSession()
+        this.loadInitialData()
+        return true
+      } catch (e) {
+        const credentialsRejected = isCredentialRejectedError(e)
+        this.authorized = false
+        this.adminAccessAvailable = false
+        if (credentialsRejected) {
+          this.clearAuthSession()
+        }
+        if (options.skipWorkspaceReset !== true) {
+          this.resetWorkspaceState()
+        }
+        if (silent) {
+          this.authError = credentialsRejected
+            ? String(options.failureMessage || '')
+            : '自动登录失败，请检查网络或服务状态后重试'
+        } else {
+          this.authError = credentialsRejected
+            ? '验证失败，API Key 可能不正确'
+            : `登录失败: ${e?.message || '请稍后重试'}`
+        }
+        return false
+      } finally {
+        this.authLoading = false
+      }
+    },
+
+    logout() {
+      this.authorized = false
+      this.clearAuthSession()
+      this.authInput = ''
+      this.authInputVisible = false
+      this.authRememberChoice = false
+      this.authError = ''
+      this.authLoading = false
+      this.resetWorkspaceState()
+    },
+
     setAuthInput(event) {
       this.authInput = String(event?.target?.value || '')
+    },
+
+    toggleAuthInputVisibility() {
+      this.authInputVisible = !this.authInputVisible
+    },
+
+    get authInputType() {
+      return this.authInputVisible ? 'text' : 'password'
+    },
+
+    get authVisibilityButtonTitle() {
+      return this.authInputVisible ? '隐藏密钥' : '显示密钥'
+    },
+
+    setAuthRememberChoice(event) {
+      this.authRememberChoice = Boolean(event?.target?.checked)
     },
 
     updateSearchAddress(event) {
@@ -585,6 +778,83 @@ function createMailAppState() {
     updateSortOrder(event) {
       this.sortOrder = String(event?.target?.value || 'desc')
       this.fetchMails()
+    },
+
+    buildMailListRequestPath(options = {}) {
+      const params = new URLSearchParams()
+      params.set('limit', String(options.limit || MAIL_PAGE_SIZE))
+      if (this.searchAddress) {
+        params.set('address', this.searchAddress)
+      }
+      if (this.sortOrder) {
+        params.set('sort', this.sortOrder)
+      }
+      if (options.cursor) {
+        params.set('cursor', options.cursor)
+      }
+      return `/api/admin/messages?${params.toString()}`
+    },
+
+    applyMailListResponse(data, options = {}) {
+      if (typeof data?.permissions?.admin === 'boolean') {
+        this.adminAccessAvailable = data.permissions.admin
+      }
+
+      const pageInfo = normalizeMailPageInfo(data)
+      const messages = Array.isArray(data?.messages) ? data.messages : []
+      const decorated = messages.map((mail) => this.decorateMailSummary(mail))
+
+      this.mailServerTotal = pageInfo.totalCount
+      this.mailNextCursor = pageInfo.nextCursor
+      this.mailHasMore = pageInfo.hasMore
+      this.mails = options.append ? mergeMailSummaries(this.mails, decorated) : decorated
+      this.syncActiveMailReference()
+      this.refreshMailUiState()
+      this.refreshMailListBoundaryState()
+    },
+
+    syncMailListMetaAfterLocalMutation() {
+      this.mailServerTotal = Math.max(0, this.mailServerTotal)
+      this.mailHasMore = Boolean(this.mailNextCursor) || this.mails.length < this.mailServerTotal
+      this.refreshMailListBoundaryState()
+    },
+
+    updateMailListBoundaryState(event) {
+      const container = event?.target || this.$refs?.mailList
+      if (!container) {
+        this.mailListReachedEnd = false
+        return
+      }
+
+      const threshold = 24
+      this.mailListReachedEnd =
+        container.scrollHeight <= container.clientHeight + threshold ||
+        container.scrollTop + container.clientHeight >= container.scrollHeight - threshold
+    },
+
+    refreshMailListBoundaryState() {
+      this.$nextTick(() => {
+        this.updateMailListBoundaryState({
+          target: this.$refs?.mailList || null,
+        })
+      })
+    },
+
+    removeMailsLocally(ids) {
+      const deletedIds = new Set(
+        (Array.isArray(ids) ? ids : [])
+          .map((id) => parseInt(String(id || ''), 10))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      )
+      if (!deletedIds.size) return
+
+      const previousCount = this.mails.length
+      this.mails = this.mails.filter((mail) => !deletedIds.has(mail.id))
+      const removedCount = previousCount - this.mails.length
+      if (removedCount > 0) {
+        this.mailServerTotal = Math.max(0, this.mailServerTotal - removedCount)
+      }
+      this.syncMailListMetaAfterLocalMutation()
     },
 
     // --- Core API Helper --- //
@@ -2197,31 +2467,24 @@ function createMailAppState() {
 
     async fetchMails() {
       this.isRefreshing = true
+      this.mailLoadingMore = false
+      this.mailListReachedEnd = false
       if (this.refreshHintTimer) {
         clearTimeout(this.refreshHintTimer)
         this.refreshHintTimer = null
       }
+      const requestToken = ++this.mailRequestToken
       const refreshStartedAt = Date.now()
       this.refreshHint = '刷新中...'
       try {
-        let path = '/api/admin/messages?limit=50'
-        if (this.searchAddress) path += `&address=${encodeURIComponent(this.searchAddress)}`
-        if (this.sortOrder) path += `&sort=${this.sortOrder}`
-
-        const data = await this.apiFetch(path)
-        if (typeof data?.permissions?.admin === 'boolean') {
-          this.adminAccessAvailable = data.permissions.admin
-        }
-        this.mailServerTotal = Number(data?.result_info?.total_count || 0)
-        const messages = Array.isArray(data.messages) ? data.messages : []
-        this.mails = messages.map((mail) => this.decorateMailSummary(mail))
-        this.clearFilterKeyword()
-        this.syncActiveMailReference()
-        this.refreshMailUiState()
+        const data = await this.apiFetch(this.buildMailListRequestPath())
+        if (requestToken !== this.mailRequestToken) return
+        this.applyMailListResponse(data, { append: false })
         const elapsed = Date.now() - refreshStartedAt
         if (elapsed < 300) {
           await new Promise((resolve) => setTimeout(resolve, 300 - elapsed))
         }
+        if (requestToken !== this.mailRequestToken) return
         this.refreshHint = '已刷新'
         this.refreshHintTimer = setTimeout(() => {
           this.refreshHint = ''
@@ -2233,6 +2496,7 @@ function createMailAppState() {
           this.clearActiveMailState()
         }
       } catch (e) {
+        if (requestToken !== this.mailRequestToken) return
         this.refreshHint = '刷新失败'
         this.refreshHintTimer = setTimeout(() => {
           this.refreshHint = ''
@@ -2240,7 +2504,34 @@ function createMailAppState() {
         }, 2000)
         this.showError('邮件列表加载失败: ' + e.message)
       } finally {
-        this.isRefreshing = false
+        if (requestToken === this.mailRequestToken) {
+          this.isRefreshing = false
+        }
+      }
+    },
+
+    async loadMoreMails() {
+      if (this.isRefreshing || this.mailLoadingMore || !this.mailHasMore || !this.mailNextCursor) {
+        return
+      }
+
+      const requestToken = ++this.mailRequestToken
+      this.mailLoadingMore = true
+      try {
+        const data = await this.apiFetch(
+          this.buildMailListRequestPath({
+            cursor: this.mailNextCursor,
+          })
+        )
+        if (requestToken !== this.mailRequestToken) return
+        this.applyMailListResponse(data, { append: true })
+      } catch (error) {
+        if (requestToken !== this.mailRequestToken) return
+        this.showError('加载更多邮件失败: ' + error.message)
+      } finally {
+        if (requestToken === this.mailRequestToken) {
+          this.mailLoadingMore = false
+        }
       }
     },
 
@@ -2287,6 +2578,15 @@ function createMailAppState() {
         return `${this.filteredMails.length} / ${this.mails.length} / ${this.mailServerTotal} 封邮件`
       }
       return `${this.mails.length} / ${this.mailServerTotal} 封邮件`
+    },
+    get showLoadMoreMails() {
+      return this.mailLoadingMore || (this.mailHasMore && this.mailListReachedEnd)
+    },
+    get loadMoreMailsButtonLabel() {
+      return this.mailLoadingMore ? '加载中...' : '加载更多'
+    },
+    get loadMoreMailsDisabled() {
+      return this.isRefreshing || this.mailLoadingMore || !this.mailHasMore
     },
     get hasSelectedIds() {
       return this.selectedIds.length > 0
@@ -2720,8 +3020,7 @@ function createMailAppState() {
       const id = this.activeMailDetail.id
       try {
         await this.apiFetch(`/api/admin/messages/${id}`, { method: 'DELETE' })
-        this.mails = this.mails.filter((m) => m.id !== id)
-        this.clearFilterKeyword()
+        this.removeMailsLocally([id])
         this.clearActiveMailState()
         this.refreshMailUiState()
         await this.refreshStatsAfterMutation()
@@ -2747,11 +3046,10 @@ function createMailAppState() {
         const deleted =
           Array.isArray(result.deleted) && result.deleted.length > 0 ? result.deleted : ids
         const deletedIds = new Set(deleted.map((id) => Number(id)))
-        this.mails = this.mails.filter((m) => !deletedIds.has(m.id))
+        this.removeMailsLocally(Array.from(deletedIds))
         if (this.activeMail && deletedIds.has(this.activeMail.id)) {
           this.clearActiveMailState()
         }
-        this.clearFilterKeyword()
         this.selectedIds = []
         this.refreshMailUiState()
         await this.refreshStatsAfterMutation()

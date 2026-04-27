@@ -5,7 +5,7 @@ import {
   invalidateAnalysisMemoryCache,
 } from './analysis.js'
 import { handleAdminOpenApiRequest } from './api-docs-handlers.js'
-import { authErrorResponse, hasAdminAccess, hasReadAccess } from './auth.js'
+import { hasAdminAccess } from './auth.js'
 import { MAX_BATCH_MESSAGE_IDS } from './constants.js'
 import {
   handleMailboxCreateRequest,
@@ -41,14 +41,16 @@ import {
   handleGovernanceStatusRequest,
 } from './mail-governance-handlers.js'
 import {
+  buildMessagePageCursor,
   buildMessageCountQuery,
   buildMessageListQuery,
   normalizeIdList,
+  parseMessageCursor,
   parseDateParam,
   parseMessageLimit,
-  parseSinceId,
   parseSortOrder,
 } from './query.js'
+import { resolveApiRoute } from './routes.js'
 import { normalizeAddress, normalizeText } from './text-core.js'
 import { logError } from './text-logging.js'
 
@@ -56,20 +58,6 @@ const MESSAGE_NEXT_EFFECTS = new Set(['none', 'mark_read', 'delete'])
 
 function missingMessagesTableResponse() {
   return jsonResponse({ ok: false, error: 'emails 表不存在，请先执行 D1 迁移' }, 503)
-}
-
-export function ensureApiReadAccess(request, env) {
-  if (!hasReadAccess(request, env)) {
-    return authErrorResponse(401, 'Unauthorized')
-  }
-  return null
-}
-
-function ensureAdminRequest(request, env) {
-  if (!hasAdminAccess(request, env)) {
-    return authErrorResponse(403, 'Admin access required')
-  }
-  return null
 }
 
 async function parseJsonPayload(request, path, actionLabel) {
@@ -154,9 +142,6 @@ async function parseMessagesNextPayload(request, path) {
 }
 
 async function handleMessagesNextRequest(request, env, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   const { address, unreadOnly, includeSource, effect, errorResponse } =
     await parseMessagesNextPayload(request, path)
   if (errorResponse) return errorResponse
@@ -185,18 +170,15 @@ async function handleMessagesNextRequest(request, env, path) {
 }
 
 async function handleAdminMessageListRequest(request, env, url, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   const address = normalizeAddress(url.searchParams.get('address'))
   const sender = normalizeText(url.searchParams.get('sender'))
   const subject = normalizeText(url.searchParams.get('subject'))
   const query = normalizeText(url.searchParams.get('q'))
   const start = parseDateParam(url.searchParams.get('start'))
   const end = parseDateParam(url.searchParams.get('end'))
-  const sinceId = parseSinceId(url.searchParams.get('since_id'))
+  const cursor = parseMessageCursor(url.searchParams.get('cursor'))
   const sortOrder = parseSortOrder(url.searchParams.get('sort'))
-  const limit = parseMessageLimit(url.searchParams.get('limit'))
+  const pageSize = parseMessageLimit(url.searchParams.get('limit'))
 
   try {
     const { sql, params } = buildMessageListQuery(MESSAGE_SUMMARY_FIELDS, {
@@ -206,9 +188,9 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       query,
       start,
       end,
-      sinceId,
+      cursor,
       sortOrder,
-      limit,
+      limit: pageSize + 1,
     })
     const { sql: countSql, params: countParams } = buildMessageCountQuery({
       address,
@@ -217,9 +199,6 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       query,
       start,
       end,
-      sinceId,
-      sortOrder,
-      limit,
     })
     const [out, totalRow] = await Promise.all([
       env.DB.prepare(sql)
@@ -231,14 +210,20 @@ async function handleAdminMessageListRequest(request, env, url, path) {
     ])
 
     const rows = Array.isArray(out?.results) ? out.results : []
-    const messages = rows.map(formatMessageSummary).filter(Boolean)
+    const hasMore = rows.length > pageSize
+    const pageRows = hasMore ? rows.slice(0, pageSize) : rows
+    const messages = pageRows.map(formatMessageSummary).filter(Boolean)
+    const totalCount = Number(totalRow?.total || 0)
+    const nextCursor = hasMore ? buildMessagePageCursor(pageRows[pageRows.length - 1]) : ''
 
     return jsonResponse({
       ok: true,
       messages,
-      result_info: {
+      page_info: {
         count: messages.length,
-        total_count: Number(totalRow?.total || 0),
+        total_count: totalCount,
+        has_more: hasMore,
+        next_cursor: nextCursor,
       },
       permissions: {
         admin: hasAdminAccess(request, env),
@@ -256,18 +241,15 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       query,
       start,
       end,
-      sinceId,
+      cursor: cursor ? `${cursor.receivedAt}|${cursor.id}` : '',
       sortOrder,
-      limit,
+      limit: pageSize,
     })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }
 
 async function handleAdminMessageDetailGetRequest(request, env, id, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   try {
     const row = await selectMessageRowById(env, id)
     if (!row) return jsonResponse({ ok: false, error: 'Not found' }, 404)
@@ -282,9 +264,6 @@ async function handleAdminMessageDetailGetRequest(request, env, id, path) {
 }
 
 async function handleAdminMessageDeleteRequest(request, env, id, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   try {
     const existing = await selectMessageRecipientById(env, id)
     if (!existing) return jsonResponse({ ok: false, error: 'Not found' }, 404)
@@ -314,9 +293,6 @@ async function handleAdminMessageDetailRequest(request, env, path, id) {
 }
 
 async function handleAdminMessageBatchDeleteRequest(request, env, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   const { ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
@@ -352,9 +328,6 @@ async function handleAdminMessageBatchDeleteRequest(request, env, path) {
 }
 
 async function handleAdminMessageReadRequest(request, env, path) {
-  const authFailure = ensureApiReadAccess(request, env)
-  if (authFailure) return authFailure
-
   const { payload, ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
@@ -381,9 +354,6 @@ async function handleAdminMessageReadRequest(request, env, path) {
 }
 
 async function handleAdminMessageStarRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   const { payload, ids, errorResponse } = await parseBatchMutationPayload(
     request,
     path,
@@ -409,140 +379,72 @@ async function handleAdminMessageStarRequest(request, env, path) {
   }
 }
 
-export async function handleApiRequest(request, env, url, path) {
-  if (path === '/api/messages/next') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleMessagesNextRequest(request, env, path)
+export async function handleApiRequest(request, env, url, path, resolvedRoute, runtime = {}) {
+  const routeMatch = resolvedRoute || resolveApiRoute(path, request.method)
+  if (!routeMatch) {
+    return jsonResponse({ ok: false, error: 'Not found' }, 404)
   }
 
-  if (path === '/api/mailboxes') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleMailboxCreateRequest(request, env, path)
+  if (!routeMatch.operation) {
+    return methodNotAllowed(routeMatch.allowedMethods)
   }
 
-  if (path === '/api/admin/messages') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAdminMessageListRequest(request, env, url, path)
-  }
+  const params = routeMatch.params || {}
 
-  if (path === '/api/admin/messages/read') {
-    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
-    return handleAdminMessageReadRequest(request, env, path)
+  switch (routeMatch.operation.handler) {
+    case 'version':
+      return jsonResponse({
+        ok: true,
+        version: runtime.version || '',
+        release_tag: runtime.releaseTag || '',
+      })
+    case 'messagesNext':
+      return handleMessagesNextRequest(request, env, path)
+    case 'mailboxesCreate':
+      return handleMailboxCreateRequest(request, env, path)
+    case 'adminMessagesList':
+      return handleAdminMessageListRequest(request, env, url, path)
+    case 'adminMessagesRead':
+      return handleAdminMessageReadRequest(request, env, path)
+    case 'adminMessagesStar':
+      return handleAdminMessageStarRequest(request, env, path)
+    case 'adminMessagesDeleteBatch':
+      return handleAdminMessageBatchDeleteRequest(request, env, path)
+    case 'analysisSummary':
+      return handleAnalysisSummaryRequest(url, env, path)
+    case 'analysisTrend':
+      return handleAnalysisTrendRequest(url, env, path)
+    case 'analysisSenders':
+      return handleAnalysisSendersRequest(url, env, path)
+    case 'adminDomainsList':
+      return handleManagedDomainsRequest(request, env, path)
+    case 'adminOpenapi':
+      return handleAdminOpenApiRequest(request, env, path)
+    case 'adminDomainsSync':
+      return handleManagedDomainSyncRequest(request, env, path)
+    case 'adminDomainsBatch':
+      return handleManagedDomainBatchPolicyRequest(request, env, path)
+    case 'adminGovernanceSettings':
+      return handleGovernanceSettingsRequest(request, env, path)
+    case 'adminGovernanceStatus':
+      return handleGovernanceStatusRequest(request, env, path)
+    case 'adminGovernanceRetentionRun':
+      return handleGovernanceRetentionRunRequest(request, env, path)
+    case 'adminCleanupRules':
+      return handleCleanupRulesRequest(request, env, path)
+    case 'adminCleanupRulesPreview':
+      return handleCleanupRulePreviewRequest(request, env, path)
+    case 'adminCleanupRulesRun':
+      return handleCleanupRulesRunRequest(request, env, path)
+    case 'adminMessageDetail':
+      return handleAdminMessageDetailRequest(request, env, path, params.id)
+    case 'adminDomainDetail':
+      return handleManagedDomainPolicyRequest(request, env, path, params.zoneId)
+    case 'adminCleanupRuleRun':
+      return handleCleanupRuleRunRequest(request, env, path, params.id)
+    case 'adminCleanupRuleDetail':
+      return handleCleanupRuleDetailRequest(request, env, path, params.id)
+    default:
+      return jsonResponse({ ok: false, error: 'Not found' }, 404)
   }
-
-  if (path === '/api/admin/messages/star') {
-    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
-    return handleAdminMessageStarRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/messages/delete') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleAdminMessageBatchDeleteRequest(request, env, path)
-  }
-
-  if (path === '/api/analysis/summary') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAnalysisSummaryRequest(url, env, path)
-  }
-
-  if (path === '/api/analysis/trend') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAnalysisTrendRequest(url, env, path)
-  }
-
-  if (path === '/api/analysis/senders') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAnalysisSendersRequest(url, env, path)
-  }
-
-  if (path === '/api/admin/domains') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleManagedDomainsRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/openapi') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleAdminOpenApiRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/domains/sync') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleManagedDomainSyncRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/domains/batch') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleManagedDomainBatchPolicyRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/governance/settings') {
-    if (request.method !== 'GET' && request.method !== 'PUT') {
-      return methodNotAllowed(['GET', 'PUT'])
-    }
-    return handleGovernanceSettingsRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/governance/status') {
-    if (request.method !== 'GET') return methodNotAllowed(['GET'])
-    return handleGovernanceStatusRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/governance/retention/run') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleGovernanceRetentionRunRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/cleanup-rules') {
-    if (request.method !== 'GET' && request.method !== 'POST') {
-      return methodNotAllowed(['GET', 'POST'])
-    }
-    return handleCleanupRulesRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/cleanup-rules/preview') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleCleanupRulePreviewRequest(request, env, path)
-  }
-
-  if (path === '/api/admin/cleanup-rules/run') {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleCleanupRulesRunRequest(request, env, path)
-  }
-
-  const adminMessageDetailMatch = path.match(/^\/api\/admin\/messages\/(\d+)$/)
-  if (adminMessageDetailMatch) {
-    return handleAdminMessageDetailRequest(
-      request,
-      env,
-      path,
-      parseInt(adminMessageDetailMatch[1], 10)
-    )
-  }
-
-  const managedDomainMatch = path.match(/^\/api\/admin\/domains\/([^/]+)$/)
-  if (managedDomainMatch) {
-    if (request.method !== 'PUT') return methodNotAllowed(['PUT'])
-    return handleManagedDomainPolicyRequest(request, env, path, managedDomainMatch[1])
-  }
-
-  const cleanupRuleRunMatch = path.match(/^\/api\/admin\/cleanup-rules\/(\d+)\/run$/)
-  if (cleanupRuleRunMatch) {
-    if (request.method !== 'POST') return methodNotAllowed(['POST'])
-    return handleCleanupRuleRunRequest(request, env, path, parseInt(cleanupRuleRunMatch[1], 10))
-  }
-
-  const cleanupRuleDetailMatch = path.match(/^\/api\/admin\/cleanup-rules\/(\d+)$/)
-  if (cleanupRuleDetailMatch) {
-    if (request.method !== 'PUT' && request.method !== 'DELETE') {
-      return methodNotAllowed(['PUT', 'DELETE'])
-    }
-    return handleCleanupRuleDetailRequest(
-      request,
-      env,
-      path,
-      parseInt(cleanupRuleDetailMatch[1], 10)
-    )
-  }
-
-  return jsonResponse({ ok: false, error: 'Not found' }, 404)
 }

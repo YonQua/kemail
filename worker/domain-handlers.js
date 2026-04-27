@@ -1,4 +1,3 @@
-import { authErrorResponse, hasAdminAccess, hasReadAccess } from './auth.js'
 import { listCloudflareZones } from './cloudflare.js'
 import {
   ManagedDomainSyncGuardError,
@@ -26,20 +25,6 @@ function missingManagedDomainsTableResponse() {
 
 function isCloudflareTokenMissing(error) {
   return String(error?.message || '') === 'CLOUDFLARE_API_TOKEN is not configured'
-}
-
-function ensureAdminRequest(request, env) {
-  if (!hasAdminAccess(request, env)) {
-    return authErrorResponse(403, 'Admin access required')
-  }
-  return null
-}
-
-function ensureExternalIssueRequest(request, env) {
-  if (!hasReadAccess(request, env)) {
-    return authErrorResponse(401, 'Unauthorized')
-  }
-  return null
 }
 
 function parseIssuableEnabled(value) {
@@ -79,9 +64,6 @@ function normalizeZoneIdList(value) {
 }
 
 export async function handleManagedDomainsRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const domains = await listManagedDomains(env)
     return jsonResponse({ ok: true, domains })
@@ -95,9 +77,6 @@ export async function handleManagedDomainsRequest(request, env, path) {
 }
 
 export async function handleManagedDomainSyncRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const syncedAt = new Date().toISOString()
     const zones = await listCloudflareZones(env)
@@ -125,9 +104,6 @@ export async function handleManagedDomainSyncRequest(request, env, path) {
 }
 
 export async function handleManagedDomainPolicyRequest(request, env, path, zoneId) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   const payload = await parseJsonPayload(request, path, 'Managed domain policy')
   if (payload == null) {
     return jsonResponse({ ok: false, error: 'Invalid request body' }, 400)
@@ -172,9 +148,6 @@ export async function handleManagedDomainPolicyRequest(request, env, path, zoneI
 }
 
 export async function handleManagedDomainBatchPolicyRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   const payload = await parseJsonPayload(request, path, 'Managed domain batch policy')
   if (payload == null) {
     return jsonResponse({ ok: false, error: 'Invalid request body' }, 400)
@@ -230,9 +203,6 @@ export async function handleManagedDomainBatchPolicyRequest(request, env, path) 
 }
 
 export async function handleMailboxCreateRequest(request, env, path) {
-  const authFailure = ensureExternalIssueRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const domains = await listIssuableDomains(env)
     if (domains.length === 0) {

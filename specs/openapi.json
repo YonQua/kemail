@@ -1820,11 +1820,12 @@
             }
           },
           {
-            "name": "since_id",
+            "name": "cursor",
             "in": "query",
             "schema": {
-              "type": "integer"
-            }
+              "type": "string"
+            },
+            "description": "上一页最后一封邮件返回的分页游标，用于继续加载后续历史邮件。"
           },
           {
             "name": "sort",
@@ -1863,7 +1864,7 @@
                         "$ref": "#/components/schemas/MessageSummary"
                       }
                     },
-                    "result_info": {
+                    "page_info": {
                       "type": "object",
                       "properties": {
                         "count": {
@@ -1871,11 +1872,19 @@
                         },
                         "total_count": {
                           "type": "integer"
+                        },
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": "string"
                         }
                       },
                       "required": [
                         "count",
-                        "total_count"
+                        "total_count",
+                        "has_more",
+                        "next_cursor"
                       ]
                     },
                     "permissions": {
@@ -1893,7 +1902,7 @@
                   "required": [
                     "ok",
                     "messages",
-                    "result_info",
+                    "page_info",
                     "permissions"
                   ]
                 }

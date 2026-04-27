@@ -27,10 +27,42 @@
             </div>
             <div>
                 <label for="apiKey" class="auth-label">只读密钥 / 管理员密钥</label>
-                <input type="password" id="apiKey" :value="authInput" :disabled="authLoading" placeholder="输入只读密钥或管理员密钥"
-                    autocomplete="off" @input="setAuthInput" @keyup.enter="login" />
+                <div class="auth-input-wrap">
+                    <input :type="authInputType" id="apiKey" :value="authInput" :disabled="authLoading"
+                        placeholder="输入只读密钥或管理员密钥" autocomplete="off" @input="setAuthInput"
+                        @keyup.enter="login" />
+                    <button type="button" class="btn btn-icon auth-visibility-btn" :disabled="authLoading"
+                        :aria-label="authVisibilityButtonTitle" :title="authVisibilityButtonTitle"
+                        @click="toggleAuthInputVisibility">
+                        <template x-if="!authInputVisible">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false" width="16" height="16">
+                                <path
+                                    d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0">
+                                </path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </template>
+                        <template x-if="authInputVisible">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" aria-hidden="true" focusable="false" width="16" height="16">
+                                <path
+                                    d="M3 3l18 18M10.584 10.587A2 2 0 0 0 13.414 13.4M9.363 5.365A10.66 10.66 0 0 1 12 5c4.552 0 8.455 2.84 10 7a10.57 10.57 0 0 1-4.17 5.357M6.228 6.233A10.57 10.57 0 0 0 2 12c1.545 4.16 5.448 7 10 7a10.66 10.66 0 0 0 4.124-.822">
+                                </path>
+                                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"></path>
+                            </svg>
+                        </template>
+                    </button>
+                </div>
             </div>
-            <p class="auth-note">密钥仅保留在当前页面内存中，刷新或关闭页面后需要重新输入。</p>
+            <label class="auth-remember-row">
+                <input type="checkbox" :checked="authRememberChoice" :disabled="authLoading"
+                    @change="setAuthRememberChoice" />
+                <span>记住密钥</span>
+            </label>
+            <p class="auth-note">默认仅在当前标签页内保持登录；勾选后会在当前浏览器本地保存密钥，并在刷新或重新打开后自动恢复。仅建议在你信任的私人设备上启用。</p>
             <button type="button" class="btn btn-primary auth-submit" @click="login" :disabled="authLoading"
                 x-text="authSubmitLabel"></button>
             <div class="auth-error" :class="authErrorClass" x-text="authError"></div>
@@ -618,7 +650,7 @@
                     </div>
                 </div>
 
-                <div class="email-list">
+                <div class="email-list" x-ref="mailList" @scroll="updateMailListBoundaryState">
                     <template x-if="isFilteredMailsEmpty">
                         <div class="detail-empty detail-empty-list">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -656,6 +688,13 @@
                                     </button>
                                 </template>
                             </div>
+                        </div>
+                    </template>
+
+                    <template x-if="showLoadMoreMails">
+                        <div class="email-list-footer">
+                            <button class="btn btn-secondary" @click="loadMoreMails" :disabled="loadMoreMailsDisabled"
+                                x-text="loadMoreMailsButtonLabel"></button>
                         </div>
                     </template>
                 </div>

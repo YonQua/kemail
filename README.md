@@ -305,7 +305,7 @@ npm install -g wrangler@latest
 
 - `READ_API_KEY` 可调用公开主链，并可访问内部消息列表/详情/删除/已读接口
 - `ADMIN_API_KEY` 额外拥有星标、域名池管理与邮件治理能力
-- 管理页支持只读密钥登录；只读会话不会展示域名池和治理入口
+- 管理页支持只读密钥登录；默认会在当前标签页内保持登录状态，勾选“记住密钥”后可在当前浏览器本地自动恢复；只读会话不会展示域名池和治理入口
 
 ## 运行时行为
 
@@ -313,9 +313,10 @@ npm install -g wrangler@latest
 - `POST /api/messages/next` 是公开消费入口；请求体使用 `effect = none | mark_read | delete`，并可通过 `include_source` 决定是否返回原始 MIME
 - 公开主链返回统一的 canonical message envelope：`preview + content{text,html,source} + artifacts{codes,links}`
 - 管理控制台与内部脚本统一走 `/api/admin/messages*`，不再依赖 `/api/latest`、`/api/emails/{id}`、`?rich=1` 或 `/source` 这类隐藏升级链路
+- 管理收件箱列表 `GET /api/admin/messages` 现使用 cursor 分页，响应分页元信息统一放在 `page_info`，不再保留旧的 `result_info` 兼容字段
 - `GET /api/version` 仅用于手工确认线上实例当前跑的是哪一版，不属于公开主链契约
 - Workers KV 只承担未鉴权 API 的防刷限流
-- 已鉴权请求按 read / write / analysis / source-heavy 四类走 Worker 进程内限流，不再持续写入 Workers KV
+- 已鉴权请求按 admin-read / read / write / analysis 四类走 Worker 进程内限流，不再持续写入 Workers KV
 - 地址命中查询和“下一封”选择依赖 `(recipient, received_at DESC, id DESC)` 索引，避免同时间戳邮件选择不稳定
 - `scheduled()` 现在可同时承载两类治理动作：
   - 活表保留清理：按治理设置中的 `retention_enabled / retention_days` 执行，治理表缺失时回退到代码默认值

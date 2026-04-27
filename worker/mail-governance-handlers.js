@@ -1,5 +1,4 @@
 import { invalidateAnalysisMemoryCache } from './analysis.js'
-import { authErrorResponse, hasAdminAccess } from './auth.js'
 import { jsonResponse } from './http.js'
 import {
   countCleanupRuleMatches,
@@ -21,13 +20,6 @@ import {
   updateGovernanceSettings,
 } from './mail-governance-store.js'
 import { logError } from './text-logging.js'
-
-function ensureAdminRequest(request, env) {
-  if (!hasAdminAccess(request, env)) {
-    return authErrorResponse(403, 'Admin access required')
-  }
-  return null
-}
 
 function governanceMigrationRequiredResponse() {
   return jsonResponse(
@@ -91,9 +83,6 @@ function validateRuleInput(rule) {
 }
 
 export async function handleGovernanceSettingsRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     if (request.method === 'GET') {
       const settings = await readGovernanceSettings(env)
@@ -144,9 +133,6 @@ export async function handleGovernanceSettingsRequest(request, env, path) {
 }
 
 export async function handleGovernanceStatusRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const settings = await readGovernanceSettings(env)
     const [totalRules, enabledRules] = await Promise.all([
@@ -167,9 +153,6 @@ export async function handleGovernanceStatusRequest(request, env, path) {
 }
 
 export async function handleGovernanceRetentionRunRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const result = await executeRetentionCleanup(env)
     if (result.deleted_count > 0) {
@@ -186,9 +169,6 @@ export async function handleGovernanceRetentionRunRequest(request, env, path) {
 }
 
 export async function handleCleanupRulesRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     if (request.method === 'GET') {
       const rules = await listCleanupRules(env)
@@ -218,9 +198,6 @@ export async function handleCleanupRulesRequest(request, env, path) {
 }
 
 export async function handleCleanupRulePreviewRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const payload = await parseJsonPayload(request, path, 'Cleanup rule preview')
     if (payload == null) {
@@ -253,9 +230,6 @@ export async function handleCleanupRulePreviewRequest(request, env, path) {
 }
 
 export async function handleCleanupRulesRunRequest(request, env, path) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const result = await executeCleanupRules(env, {
       onlyEnabled: true,
@@ -274,9 +248,6 @@ export async function handleCleanupRulesRunRequest(request, env, path) {
 }
 
 export async function handleCleanupRuleDetailRequest(request, env, path, id) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     if (request.method === 'DELETE') {
       const existing = await selectCleanupRuleById(env, id)
@@ -330,9 +301,6 @@ export async function handleCleanupRuleDetailRequest(request, env, path, id) {
 }
 
 export async function handleCleanupRuleRunRequest(request, env, path, id) {
-  const authFailure = ensureAdminRequest(request, env)
-  if (authFailure) return authFailure
-
   try {
     const rule = await selectCleanupRuleById(env, id)
     if (!rule) {

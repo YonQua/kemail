@@ -5,15 +5,59 @@ import {
   AUTH_RATE_WINDOW,
   RATE_LIMIT,
   RATE_WINDOW,
-  SOURCE_HEAVY_RATE_LIMIT,
-  SOURCE_HEAVY_RATE_WINDOW,
   WRITE_RATE_LIMIT,
   WRITE_RATE_WINDOW,
 } from './constants.js'
 import { jsonResponse } from './http.js'
+import { API_AUTH_LEVEL, API_RATE_LIMIT_CLASS } from './routes.js'
 
+// 管理后台列表刷新、详情切换和批量操作会产生一串短时间读请求，因此读限流单独放宽。
+const ADMIN_READ_RATE_LIMIT = 200
+const ADMIN_READ_RATE_WINDOW = 60
 const memoryRateLimitStores = new WeakMap()
 const fallbackMemoryRateLimitStore = new Map()
+
+function buildRateLimitPolicy(scope, limit, windowSeconds, storage = 'memory') {
+  return Object.freeze({ scope, limit, windowSeconds, storage })
+}
+
+export const UNAUTHORIZED_RATE_LIMIT_POLICY = buildRateLimitPolicy(
+  'unauthorized',
+  RATE_LIMIT,
+  RATE_WINDOW,
+  'kv'
+)
+
+const ANALYSIS_RATE_LIMIT_POLICY = buildRateLimitPolicy(
+  'authorized-analysis',
+  ANALYSIS_RATE_LIMIT,
+  ANALYSIS_RATE_WINDOW
+)
+
+const AUTHORIZED_WRITE_RATE_LIMIT_POLICY = buildRateLimitPolicy(
+  'authorized-write',
+  WRITE_RATE_LIMIT,
+  WRITE_RATE_WINDOW
+)
+
+const AUTHORIZED_ADMIN_READ_RATE_LIMIT_POLICY = buildRateLimitPolicy(
+  'authorized-admin-read',
+  ADMIN_READ_RATE_LIMIT,
+  ADMIN_READ_RATE_WINDOW
+)
+
+const AUTHORIZED_READ_RATE_LIMIT_POLICY = buildRateLimitPolicy(
+  'authorized-read',
+  AUTH_RATE_LIMIT,
+  AUTH_RATE_WINDOW
+)
+
+const AUTHORIZED_RATE_LIMIT_POLICIES = Object.freeze({
+  [API_RATE_LIMIT_CLASS.ANALYSIS]: ANALYSIS_RATE_LIMIT_POLICY,
+  [API_RATE_LIMIT_CLASS.WRITE]: AUTHORIZED_WRITE_RATE_LIMIT_POLICY,
+  [API_RATE_LIMIT_CLASS.ADMIN_READ]: AUTHORIZED_ADMIN_READ_RATE_LIMIT_POLICY,
+  [API_RATE_LIMIT_CLASS.READ]: AUTHORIZED_READ_RATE_LIMIT_POLICY,
+})
 
 export function getBearerToken(request) {
   const authHeader = request.headers.get('Authorization')
@@ -48,6 +92,20 @@ export function hasAdminAccess(request, env) {
 
 export function authErrorResponse(status, error) {
   return jsonResponse({ ok: false, error }, status)
+}
+
+export function ensureApiReadAccess(request, env) {
+  if (!hasReadAccess(request, env)) {
+    return authErrorResponse(401, 'Unauthorized')
+  }
+  return null
+}
+
+export function ensureApiAdminAccess(request, env) {
+  if (!hasAdminAccess(request, env)) {
+    return authErrorResponse(403, 'Admin access required')
+  }
+  return null
 }
 
 function getMemoryRateLimitStore(env) {
@@ -120,58 +178,14 @@ export async function checkRateLimit(request, env, scope = 'api') {
   return true
 }
 
-export function authenticatedRateLimitPolicy(request, _url, path) {
-  const method = request.method
-  const isAnalysisPath = path.startsWith('/api/analysis/')
-  const isAdminMessageDetailPath = /^\/api\/admin\/messages\/\d+$/.test(path)
-  const isWritePath =
-    path === '/api/messages/next' ||
-    method === 'DELETE' ||
-    path === '/api/admin/messages/delete' ||
-    path === '/api/admin/messages/read' ||
-    path === '/api/admin/messages/star' ||
-    path === '/api/admin/domains/sync' ||
-    path === '/api/admin/domains/batch' ||
-    path === '/api/admin/governance/settings' ||
-    path === '/api/admin/governance/retention/run' ||
-    path === '/api/admin/cleanup-rules' ||
-    path === '/api/admin/cleanup-rules/run' ||
-    /^\/api\/admin\/domains\/[^/]+$/.test(path) ||
-    /^\/api\/admin\/cleanup-rules\/\d+$/.test(path) ||
-    /^\/api\/admin\/cleanup-rules\/\d+\/run$/.test(path)
-  const isSourceHeavyPath = isAdminMessageDetailPath
+export function getAuthorizedRateLimitPolicy(rateLimitClass = API_RATE_LIMIT_CLASS.READ) {
+  return AUTHORIZED_RATE_LIMIT_POLICIES[rateLimitClass] || AUTHORIZED_READ_RATE_LIMIT_POLICY
+}
 
-  if (isAnalysisPath) {
-    return {
-      scope: 'authorized-analysis',
-      limit: ANALYSIS_RATE_LIMIT,
-      windowSeconds: ANALYSIS_RATE_WINDOW,
-      storage: 'memory',
-    }
+export function ensureApiRouteAccess(request, env, authLevel = API_AUTH_LEVEL.READ) {
+  if (authLevel === API_AUTH_LEVEL.NONE) return null
+  if (authLevel === API_AUTH_LEVEL.ADMIN) {
+    return ensureApiAdminAccess(request, env)
   }
-
-  if (isSourceHeavyPath) {
-    return {
-      scope: 'authorized-source-heavy',
-      limit: SOURCE_HEAVY_RATE_LIMIT,
-      windowSeconds: SOURCE_HEAVY_RATE_WINDOW,
-      storage: 'memory',
-    }
-  }
-
-  if (isWritePath) {
-    return {
-      scope: 'authorized-write',
-      limit: WRITE_RATE_LIMIT,
-      windowSeconds: WRITE_RATE_WINDOW,
-      storage: 'memory',
-    }
-  }
-
-  return {
-    scope: 'authorized-read',
-    limit: AUTH_RATE_LIMIT,
-    windowSeconds: AUTH_RATE_WINDOW,
-    storage: 'memory',
-  }
+  return ensureApiReadAccess(request, env)
 }

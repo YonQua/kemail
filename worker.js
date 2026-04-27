@@ -1,7 +1,13 @@
 import { APP_RELEASE_TAG, APP_VERSION } from './version.js'
 import { invalidateAnalysisMemoryCache } from './worker/analysis.js'
-import { ensureApiReadAccess, handleApiRequest } from './worker/api-handlers.js'
-import { authenticatedRateLimitPolicy, checkRateLimit, getBearerToken } from './worker/auth.js'
+import { handleApiRequest } from './worker/api-handlers.js'
+import {
+  checkRateLimit,
+  ensureApiRouteAccess,
+  getAuthorizedRateLimitPolicy,
+  getBearerToken,
+  UNAUTHORIZED_RATE_LIMIT_POLICY,
+} from './worker/auth.js'
 import {
   AUTO_CLEAN_DAYS,
   DAY_IN_MS,
@@ -29,6 +35,7 @@ import { executeScheduledGovernance } from './worker/mail-governance-executor.js
 import { GovernanceTablesMissingError } from './worker/mail-governance-store.js'
 import { incrementReceivedMetrics } from './worker/metrics-store.js'
 import { decodeRawEmailBytes, readRawEmailBytes } from './worker/parser.js'
+import { API_RATE_LIMIT_CLASS, resolveApiRoute } from './worker/routes.js'
 import { handleStaticAssetRequest, handleStaticDocumentRequest } from './worker/static-assets.js'
 import { appendReadableNotice, normalizeAddress } from './worker/text-core.js'
 import { logError } from './worker/text-logging.js'
@@ -43,6 +50,14 @@ async function runFallbackRetentionCleanup(env) {
     cutoffIso,
     deleted,
   }
+}
+
+function tooManyRequestsResponse(policy) {
+  return jsonResponse(
+    { ok: false, error: 'Too many requests' },
+    429,
+    { 'Retry-After': String(policy.windowSeconds) }
+  )
 }
 
 export default {
@@ -137,35 +152,32 @@ export default {
     if (isStaticAsset) {
       return handleStaticAssetRequest(request, env)
     }
-
-    if (path === '/api/version') {
-      if (request.method !== 'GET') {
-        return methodNotAllowed(['GET'])
-      }
-      return jsonResponse({
-        ok: true,
-        version: APP_VERSION,
-        release_tag: APP_RELEASE_TAG,
-      })
-    }
+    const resolvedApiRoute = isApiRequest ? resolveApiRoute(path, request.method) : null
 
     if (isApiRequest) {
-      const authFailure = ensureApiReadAccess(request, env)
-      if (authFailure) {
-        if (!(await checkRateLimit(request, env, 'unauthorized'))) {
-          return jsonResponse({ ok: false, error: 'Too many requests' }, 429)
+      if (resolvedApiRoute?.operation) {
+        const authFailure = ensureApiRouteAccess(request, env, resolvedApiRoute.operation.auth)
+        if (authFailure) {
+          if (!(await checkRateLimit(request, env, UNAUTHORIZED_RATE_LIMIT_POLICY))) {
+            return tooManyRequestsResponse(UNAUTHORIZED_RATE_LIMIT_POLICY)
+          }
+          return authFailure
         }
-        return authFailure
-      }
 
-      const token = getBearerToken(request)
-      const rateLimitPolicy = authenticatedRateLimitPolicy(request, url, path)
-      if (!(await checkRateLimit(request, env, { ...rateLimitPolicy, token }))) {
-        return jsonResponse({ ok: false, error: 'Too many requests' }, 429)
+        if (resolvedApiRoute.operation.rateLimit !== API_RATE_LIMIT_CLASS.NONE) {
+          const token = getBearerToken(request)
+          const rateLimitPolicy = getAuthorizedRateLimitPolicy(resolvedApiRoute.operation.rateLimit)
+          if (!(await checkRateLimit(request, env, { ...rateLimitPolicy, token }))) {
+            return tooManyRequestsResponse(rateLimitPolicy)
+          }
+        }
       }
     }
 
-    return handleApiRequest(request, env, url, path)
+    return handleApiRequest(request, env, url, path, resolvedApiRoute, {
+      version: APP_VERSION,
+      releaseTag: APP_RELEASE_TAG,
+    })
   },
 
   async scheduled(_event, env) {

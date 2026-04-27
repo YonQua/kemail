@@ -5,8 +5,6 @@ export const AUTH_RATE_LIMIT = 180
 export const AUTH_RATE_WINDOW = 60
 export const ANALYSIS_RATE_LIMIT = 30
 export const ANALYSIS_RATE_WINDOW = 60
-export const SOURCE_HEAVY_RATE_LIMIT = 20
-export const SOURCE_HEAVY_RATE_WINDOW = 60
 export const WRITE_RATE_LIMIT = 60
 export const WRITE_RATE_WINDOW = 60
 

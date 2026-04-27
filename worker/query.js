@@ -8,10 +8,23 @@ export function parseMessageLimit(rawValue) {
   return Math.min(parsed, MAX_MESSAGE_LIMIT)
 }
 
-export function parseSinceId(rawValue) {
-  const parsed = parseInt(rawValue || '', 10)
-  if (!Number.isFinite(parsed) || parsed < 1) return 0
-  return parsed
+export function parseMessageCursor(rawValue) {
+  const text = normalizeText(rawValue)
+  if (!text) return null
+
+  const parts = text.split('|')
+  if (parts.length !== 2) return null
+
+  const receivedAt = new Date(parts[0])
+  const id = parseInt(parts[1] || '', 10)
+  if (Number.isNaN(receivedAt.getTime()) || !Number.isFinite(id) || id < 1) {
+    return null
+  }
+
+  return {
+    receivedAt: receivedAt.toISOString(),
+    id,
+  }
 }
 
 export function parseSortOrder(rawValue) {
@@ -26,9 +39,8 @@ export function parseDateParam(rawValue) {
   return date.toISOString()
 }
 
-function buildMessageListConditions(options) {
-  const { address, sender, subject, query, start, end, sinceId, sortOrder, limit } = options
-
+function buildMessageFilterConditions(options) {
+  const { address, sender, subject, query, start, end } = options
   const conditions = []
   const params = []
 
@@ -63,16 +75,26 @@ function buildMessageListConditions(options) {
     params.push(end)
   }
 
-  if (sinceId > 0) {
-    conditions.push('id > ?')
-    params.push(sinceId)
+  return { conditions, params }
+}
+
+function buildCursorCondition(options, conditions, params) {
+  const { cursor, sortOrder } = options
+  if (!cursor) return
+
+  if (sortOrder === 'ASC') {
+    conditions.push('(received_at > ? OR (received_at = ? AND id > ?))')
+  } else {
+    conditions.push('(received_at < ? OR (received_at = ? AND id < ?))')
   }
 
-  return { conditions, params, sortOrder, limit }
+  params.push(cursor.receivedAt, cursor.receivedAt, cursor.id)
 }
 
 export function buildMessageListQuery(fields, options) {
-  const { conditions, params, sortOrder, limit } = buildMessageListConditions(options)
+  const { sortOrder, limit } = options
+  const { conditions, params } = buildMessageFilterConditions(options)
+  buildCursorCondition(options, conditions, params)
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   const sql = `SELECT ${fields} FROM ${MESSAGE_TABLE} ${whereClause} ORDER BY received_at ${sortOrder}, id ${sortOrder} LIMIT ?`
   params.push(limit)
@@ -80,12 +102,20 @@ export function buildMessageListQuery(fields, options) {
 }
 
 export function buildMessageCountQuery(options) {
-  const { conditions, params } = buildMessageListConditions(options)
+  const { conditions, params } = buildMessageFilterConditions(options)
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
   return {
     sql: `SELECT COUNT(*) as total FROM ${MESSAGE_TABLE} ${whereClause}`,
     params,
   }
+}
+
+export function buildMessagePageCursor(row) {
+  if (!row || typeof row !== 'object') return ''
+  const receivedAt = normalizeText(row.received_at)
+  const id = parseInt(String(row.id || ''), 10)
+  if (!receivedAt || !Number.isFinite(id) || id < 1) return ''
+  return `${receivedAt}|${id}`
 }
 
 export function normalizeIdList(value) {
