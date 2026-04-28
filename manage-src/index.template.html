@@ -618,13 +618,13 @@
 
                 <div class="list-controls">
                     <div class="search-bar">
-                        <input type="text" :value="searchAddress" placeholder="API 拉取: 特定收件人 "
-                            @input="updateSearchAddress" @keyup.enter="fetchMails" />
-                        <input type="text" x-ref="filterKeywordInput" :value="filterKeyword"
-                            placeholder="本地过滤: 检索主题、发件人..." @input="updateFilterKeyword" />
+                        <input type="text" :value="mailQueryDraft.address" placeholder="收件人地址"
+                            @input="updateSearchAddress" @keyup.enter="applyMailFilters" />
+                        <input type="text" :value="mailQueryDraft.query" placeholder="关键词：主题、发件人、收件人"
+                            @input="updateFilterKeyword" @keyup.enter="applyMailFilters" />
                     </div>
                     <div class="list-controls-row">
-                        <select :value="sortOrder" @change="updateSortOrder" class="controls-select">
+                        <select :value="mailQueryDraft.sort" @change="updateSortOrder" class="controls-select">
                             <option value="desc">最新在前</option>
                             <option value="asc">最早在前</option>
                         </select>
@@ -634,7 +634,7 @@
                             :class="starFilterButtonClass">仅星标</button>
                         <button class="btn btn-secondary" @click="toggleSelectAllVisible" :class="selectAllButtonClass"
                             x-text="selectAllButtonLabel"></button>
-                        <button class="btn btn-secondary" @click="fetchMails" :disabled="isRefreshing"
+                        <button class="btn btn-secondary" @click="applyMailFilters" :disabled="isRefreshing"
                             x-text="refreshButtonLabel"></button>
                         <span class="refresh-hint" :class="refreshHintClass" x-text="refreshHint"></span>
                     </div>
@@ -642,7 +642,7 @@
                     <!-- Batch Actions -->
                     <div class="batch-actions" :class="batchActionsClass">
                         <span class="batch-count">已选 <span x-text="selectedCount"></span></span>
-                        <template x-if="canUseAdminActions">
+                        <template x-if="authorized">
                             <button class="btn btn-secondary btn-compact" @click="markSelectedAsRead">标记已读</button>
                         </template>
                         <button class="btn btn-danger btn-compact" @click="deleteSelected">删除</button>
@@ -651,16 +651,16 @@
                 </div>
 
                 <div class="email-list" x-ref="mailList" @scroll="updateMailListBoundaryState">
-                    <template x-if="isFilteredMailsEmpty">
+                    <template x-if="isMailListEmpty">
                         <div class="detail-empty detail-empty-list">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                                 <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                             </svg>
-                            <p>没有找到邮件</p>
+                            <p x-text="mailEmptyStateLabel">没有找到邮件</p>
                         </div>
                     </template>
 
-                    <template x-for="mail in filteredMails" :key="mail.id">
+                    <template x-for="mail in mails" :key="mail.id">
                         <div class="email-card" :class="mail.card_class" :data-mail-id="mail.id"
                             @click="openMailByEvent">
                             <div class="email-card-checkbox" @click.stop>

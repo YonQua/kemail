@@ -1806,6 +1806,22 @@
             }
           },
           {
+            "name": "unread",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "传 `true` 时仅返回未读邮件。"
+          },
+          {
+            "name": "starred",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "传 `true` 时仅返回已星标邮件。"
+          },
+          {
             "name": "start",
             "in": "query",
             "schema": {

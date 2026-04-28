@@ -40,7 +40,7 @@ export function parseDateParam(rawValue) {
 }
 
 function buildMessageFilterConditions(options) {
-  const { address, sender, subject, query, start, end } = options
+  const { address, sender, subject, query, start, end, unread, starred } = options
   const conditions = []
   const params = []
 
@@ -63,6 +63,14 @@ function buildMessageFilterConditions(options) {
     conditions.push('(sender LIKE ? OR subject LIKE ? OR recipient LIKE ?)')
     const likeValue = `%${query}%`
     params.push(likeValue, likeValue, likeValue)
+  }
+
+  if (unread) {
+    conditions.push('is_read = 0')
+  }
+
+  if (starred) {
+    conditions.push('is_starred = 1')
   }
 
   if (start) {

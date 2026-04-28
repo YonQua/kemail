@@ -43,6 +43,26 @@ function createDefaultStatsState() {
   }
 }
 
+function createDefaultMailQuery() {
+  return {
+    address: '',
+    query: '',
+    sort: 'desc',
+    unread: false,
+    starred: false,
+  }
+}
+
+function normalizeMailQuery(query = {}) {
+  return {
+    address: String(query?.address || '').trim(),
+    query: String(query?.query || '').trim(),
+    sort: query?.sort === 'asc' ? 'asc' : 'desc',
+    unread: query?.unread === true,
+    starred: query?.starred === true,
+  }
+}
+
 function buildStoredAuthPayload(token) {
   return JSON.stringify({
     version: AUTH_STORAGE_VERSION,
@@ -549,11 +569,8 @@ function createMailAppState() {
     governancePreviewError: '',
 
     // List Query State
-    searchAddress: '',
-    filterKeyword: '',
-    sortOrder: 'desc',
-    filterUnread: false,
-    filterStarred: false,
+    mailQueryDraft: createDefaultMailQuery(),
+    mailQueryApplied: createDefaultMailQuery(),
     selectedIds: [],
     isRefreshing: false,
     mailLoadingMore: false,
@@ -617,6 +634,9 @@ function createMailAppState() {
       this.statsLastLoadedAt = 0
       this.statsMigrationRequired = false
       this.mails = []
+      this.mailQueryDraft = createDefaultMailQuery()
+      this.mailQueryApplied = createDefaultMailQuery()
+      this.selectedIds = []
       this.managedDomains = []
       this.adminAccessAvailable = false
       this.domainsLoading = false
@@ -650,6 +670,11 @@ function createMailAppState() {
       this.mailListReachedEnd = false
       this.mailRequestToken = 0
       this.mailServerTotal = 0
+      this.refreshHint = ''
+      if (this.refreshHintTimer) {
+        clearTimeout(this.refreshHintTimer)
+        this.refreshHintTimer = null
+      }
       const docsRoot = this.$refs?.docsRoot
       if (docsRoot) docsRoot.innerHTML = ''
     },
@@ -756,38 +781,55 @@ function createMailAppState() {
     },
 
     updateSearchAddress(event) {
-      this.searchAddress = String(event?.target?.value || '')
+      this.mailQueryDraft.address = String(event?.target?.value || '')
     },
 
     updateFilterKeyword(event) {
-      this.filterKeyword = String(event?.target?.value || '')
-    },
-    clearFilterKeyword() {
-      if (!this.filterKeyword) {
-        const input = this.$refs?.filterKeywordInput
-        if (input && input.value) input.value = ''
-        return
-      }
-      this.filterKeyword = ''
-      this.$nextTick(() => {
-        const input = this.$refs?.filterKeywordInput
-        if (input) input.value = ''
-      })
+      this.mailQueryDraft.query = String(event?.target?.value || '')
     },
 
     updateSortOrder(event) {
-      this.sortOrder = String(event?.target?.value || 'desc')
-      this.fetchMails()
+      this.mailQueryDraft.sort = String(event?.target?.value || 'desc') === 'asc' ? 'asc' : 'desc'
+      this.applyMailFilters()
+    },
+
+    async applyMailFilters() {
+      const nextQuery = normalizeMailQuery(this.mailQueryDraft)
+      this.mailQueryDraft = { ...nextQuery }
+      this.mailQueryApplied = { ...nextQuery }
+      this.clearSelectedIds()
+      await this.fetchMails()
+    },
+
+    async resetMailQueryToInbox(options = {}) {
+      const nextQuery = createDefaultMailQuery()
+      if (options.preserveSort === true) {
+        nextQuery.sort = this.mailQueryApplied.sort
+      }
+      this.mailQueryDraft = { ...nextQuery }
+      this.mailQueryApplied = { ...nextQuery }
+      this.clearSelectedIds()
+      await this.fetchMails()
     },
 
     buildMailListRequestPath(options = {}) {
+      const query = this.mailQueryApplied
       const params = new URLSearchParams()
       params.set('limit', String(options.limit || MAIL_PAGE_SIZE))
-      if (this.searchAddress) {
-        params.set('address', this.searchAddress)
+      if (query.address) {
+        params.set('address', query.address)
       }
-      if (this.sortOrder) {
-        params.set('sort', this.sortOrder)
+      if (query.query) {
+        params.set('q', query.query)
+      }
+      if (query.unread) {
+        params.set('unread', '1')
+      }
+      if (query.starred) {
+        params.set('starred', '1')
+      }
+      if (query.sort) {
+        params.set('sort', query.sort)
       }
       if (options.cursor) {
         params.set('cursor', options.cursor)
@@ -807,15 +849,12 @@ function createMailAppState() {
       this.mailServerTotal = pageInfo.totalCount
       this.mailNextCursor = pageInfo.nextCursor
       this.mailHasMore = pageInfo.hasMore
+      if (!options.append && this.selectedIds.length) {
+        this.selectedIds = []
+      }
       this.mails = options.append ? mergeMailSummaries(this.mails, decorated) : decorated
       this.syncActiveMailReference()
       this.refreshMailUiState()
-      this.refreshMailListBoundaryState()
-    },
-
-    syncMailListMetaAfterLocalMutation() {
-      this.mailServerTotal = Math.max(0, this.mailServerTotal)
-      this.mailHasMore = Boolean(this.mailNextCursor) || this.mails.length < this.mailServerTotal
       this.refreshMailListBoundaryState()
     },
 
@@ -838,23 +877,6 @@ function createMailAppState() {
           target: this.$refs?.mailList || null,
         })
       })
-    },
-
-    removeMailsLocally(ids) {
-      const deletedIds = new Set(
-        (Array.isArray(ids) ? ids : [])
-          .map((id) => parseInt(String(id || ''), 10))
-          .filter((id) => Number.isFinite(id) && id > 0)
-      )
-      if (!deletedIds.size) return
-
-      const previousCount = this.mails.length
-      this.mails = this.mails.filter((mail) => !deletedIds.has(mail.id))
-      const removedCount = previousCount - this.mails.length
-      if (removedCount > 0) {
-        this.mailServerTotal = Math.max(0, this.mailServerTotal - removedCount)
-      }
-      this.syncMailListMetaAfterLocalMutation()
     },
 
     // --- Core API Helper --- //
@@ -2337,9 +2359,13 @@ function createMailAppState() {
 
     async useGeneratedAddressInInbox() {
       if (!this.generatedEmail) return
-      this.searchAddress = this.generatedEmail
+      this.mailQueryDraft = {
+        ...createDefaultMailQuery(),
+        address: this.generatedEmail,
+        sort: this.mailQueryApplied.sort,
+      }
       this.switchTab('inbox')
-      await this.fetchMails()
+      await this.applyMailFilters()
     },
 
     get domainSyncButtonLabel() {
@@ -2465,7 +2491,7 @@ function createMailAppState() {
 
     // --- Mail List & Actions --- //
 
-    async fetchMails() {
+    async fetchMails(options = {}) {
       this.isRefreshing = true
       this.mailLoadingMore = false
       this.mailListReachedEnd = false
@@ -2492,7 +2518,11 @@ function createMailAppState() {
         }, 1500)
 
         // Clear active if not in list
-        if (this.activeMail && !this.findMailById(this.activeMail.id)) {
+        if (
+          this.activeMail &&
+          !this.findMailById(this.activeMail.id) &&
+          options.preserveActiveMailOnMissing !== true
+        ) {
           this.clearActiveMailState()
         }
       } catch (e) {
@@ -2508,6 +2538,16 @@ function createMailAppState() {
           this.isRefreshing = false
         }
       }
+    },
+
+    async refetchCurrentMailQuery(options = {}) {
+      this.clearSelectedIds()
+      if (options.clearActiveMail === true) {
+        this.clearActiveMailState()
+      }
+      await this.fetchMails({
+        preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
+      })
     },
 
     async loadMoreMails() {
@@ -2535,49 +2575,27 @@ function createMailAppState() {
       }
     },
 
-    get filteredMails() {
-      let result = this.mails
-
-      // Keyword filter
-      if (this.filterKeyword) {
-        const kw = this.filterKeyword.toLowerCase()
-        result = result.filter(
-          (m) =>
-            m.subject?.toLowerCase().includes(kw) ||
-            m.sender?.toLowerCase().includes(kw) ||
-            m.recipient?.toLowerCase().includes(kw)
-        )
-      }
-
-      if (this.filterUnread) {
-        result = result.filter((m) => !m.is_read)
-      }
-
-      if (this.filterStarred) {
-        result = result.filter((m) => m.is_starred)
-      }
-
-      return result
+    get hasAppliedMailFilters() {
+      const query = this.mailQueryApplied
+      return Boolean(query.address || query.query || query.unread || query.starred)
     },
 
     toggleUnreadFilter() {
-      this.filterUnread = !this.filterUnread
+      this.mailQueryDraft.unread = !this.mailQueryDraft.unread
+      this.applyMailFilters()
     },
     toggleStarFilter() {
-      this.filterStarred = !this.filterStarred
+      this.mailQueryDraft.starred = !this.mailQueryDraft.starred
+      this.applyMailFilters()
     },
     get unreadFilterButtonClass() {
-      return { 'btn-primary': this.filterUnread }
+      return { 'btn-primary': this.mailQueryApplied.unread }
     },
     get starFilterButtonClass() {
-      return { 'btn-primary': this.filterStarred }
+      return { 'btn-primary': this.mailQueryApplied.starred }
     },
     get mailCountLabel() {
-      const hasFilters = Boolean(this.filterKeyword || this.filterUnread || this.filterStarred)
-      if (hasFilters) {
-        return `${this.filteredMails.length} / ${this.mails.length} / ${this.mailServerTotal} 封邮件`
-      }
-      return `${this.mails.length} / ${this.mailServerTotal} 封邮件`
+      return `已加载 ${this.mails.length} / ${this.mailServerTotal} 封邮件`
     },
     get showLoadMoreMails() {
       return this.mailLoadingMore || (this.mailHasMore && this.mailListReachedEnd)
@@ -2594,8 +2612,11 @@ function createMailAppState() {
     get selectedCount() {
       return this.selectedIds.length
     },
-    get isFilteredMailsEmpty() {
-      return this.filteredMails.length === 0
+    get isMailListEmpty() {
+      return this.mails.length === 0
+    },
+    get mailEmptyStateLabel() {
+      return this.hasAppliedMailFilters ? '没有匹配当前筛选条件的邮件' : '没有找到邮件'
     },
     get batchActionsClass() {
       return { 'is-hidden': !this.hasSelectedIds }
@@ -2608,7 +2629,7 @@ function createMailAppState() {
       }
     },
     isAllVisibleSelected() {
-      const visibleIds = this.filteredMails.map((m) => String(m.id))
+      const visibleIds = this.mails.map((m) => String(m.id))
       if (!visibleIds.length) return false
       const selected = new Set(this.selectedIds.map((id) => String(id)))
       return visibleIds.every((id) => selected.has(id))
@@ -2630,7 +2651,7 @@ function createMailAppState() {
       this.refreshMailUiState()
     },
     toggleSelectAllVisible() {
-      const visibleIds = this.filteredMails.map((m) => String(m.id))
+      const visibleIds = this.mails.map((m) => String(m.id))
       if (!visibleIds.length) return
       const selected = new Set(this.selectedIds.map((id) => String(id)))
       const allSelected = visibleIds.every((id) => selected.has(id))
@@ -2778,7 +2799,6 @@ function createMailAppState() {
     async openMail(mail) {
       const requestToken = ++this.detailRequestToken
       this.activeMail = this.findMailById(mail.id) || mail
-      this.clearFilterKeyword()
       this.refreshMailUiState()
       this.detailLoading = true
       this.isMobileDrawerOpen = true // Open drawer on mobile
@@ -2797,8 +2817,13 @@ function createMailAppState() {
         this.showAllActionLinks = false
         this.renderMode = this.activeMailDetail.content?.html ? 'html' : 'text'
         this.resetDetailScroll()
-
-        await this.markMailAsReadIfAllowed(mail.id)
+        if (!preparedDetail.is_read) {
+          await this.markMailAsRead(mail.id, {
+            preserveActiveMailOnMissing: true,
+            silentSuccess: true,
+            silentForbidden: true,
+          })
+        }
       } catch (e) {
         if (requestToken !== this.detailRequestToken) return
         this.showError('邮件详情加载失败')
@@ -2810,22 +2835,73 @@ function createMailAppState() {
       }
     },
 
-    async markMailAsReadIfAllowed(mailId) {
-      const mail = this.findMailById(mailId)
-      if (!mail || mail.is_read) return
+    applyMailReadStateLocally(ids, read = 1) {
+      const idSet = new Set(
+        (Array.isArray(ids) ? ids : [ids])
+          .map((id) => parseInt(String(id || ''), 10))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      )
+      if (!idSet.size) return
+
+      this.mails.forEach((mail) => {
+        if (idSet.has(mail.id)) {
+          mail.is_read = read ? 1 : 0
+        }
+      })
+      if (this.activeMailDetail && idSet.has(this.activeMailDetail.id)) {
+        this.activeMailDetail.is_read = read ? 1 : 0
+      }
+      this.refreshMailUiState()
+    },
+
+    async reconcileMailReadMutation(ids, options = {}) {
+      if (this.mailQueryApplied.unread) {
+        await this.refetchCurrentMailQuery({
+          preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
+        })
+        return
+      }
+
+      this.applyMailReadStateLocally(ids, 1)
+      if (options.clearSelection !== false) {
+        this.clearSelectedIds()
+      }
+    },
+
+    async markMailAsRead(mailId, options = {}) {
+      const normalizedId = parseInt(String(mailId || ''), 10)
+      if (!Number.isFinite(normalizedId) || normalizedId < 1) return false
+      if (!this.authorized) return false
+
+      const listMail = this.findMailById(normalizedId)
+      const detailMatches = this.activeMailDetail && this.activeMailDetail.id === normalizedId
+      if (listMail?.is_read || (detailMatches && this.activeMailDetail?.is_read)) {
+        return true
+      }
 
       try {
         await this.apiFetch('/api/admin/messages/read', {
           method: 'PUT',
-          body: JSON.stringify({ ids: [mailId], read: 1 }),
+          body: JSON.stringify({ ids: [normalizedId], read: 1 }),
         })
-        this.markAsReadLocal(mailId)
+        await this.reconcileMailReadMutation([normalizedId], {
+          preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
+          clearSelection: false,
+        })
         await this.refreshStatsAfterMutation()
+        if (!options.silentSuccess) {
+          this.showSuccess('已标记为已读')
+        }
+        return true
       } catch (e) {
-        if (e.message === 'Admin access required' || e.message === 'Unauthorized') {
-          return
+        if (
+          options.silentForbidden === true &&
+          (e.message === 'Admin access required' || e.message === 'Unauthorized')
+        ) {
+          return false
         }
         this.showError('标记阅读失败')
+        return false
       }
     },
 
@@ -2980,20 +3056,16 @@ function createMailAppState() {
       const nextStar = !mail.is_starred
       const id = mail.id
       try {
-        mail.is_starred = nextStar
-        this.refreshMailUiState()
-        // If active detail is open, mirror state
-        if (this.activeMailDetail && this.activeMailDetail.id === id) {
-          this.activeMailDetail.is_starred = nextStar
-        }
         await this.apiFetch('/api/admin/messages/star', {
           method: 'PUT',
           body: JSON.stringify({ ids: [id], starred: nextStar ? 1 : 0 }),
         })
+        if (this.activeMailDetail && this.activeMailDetail.id === id) {
+          this.activeMailDetail.is_starred = nextStar
+        }
+        await this.refetchCurrentMailQuery()
         await this.refreshStatsAfterMutation()
       } catch (e) {
-        mail.is_starred = !nextStar
-        this.refreshMailUiState()
         this.showError('星标修改失败')
       }
     },
@@ -3020,9 +3092,8 @@ function createMailAppState() {
       const id = this.activeMailDetail.id
       try {
         await this.apiFetch(`/api/admin/messages/${id}`, { method: 'DELETE' })
-        this.removeMailsLocally([id])
         this.clearActiveMailState()
-        this.refreshMailUiState()
+        await this.resetMailQueryToInbox({ preserveSort: true })
         await this.refreshStatsAfterMutation()
         this.showSuccess('邮件已删除')
       } catch (e) {
@@ -3046,12 +3117,10 @@ function createMailAppState() {
         const deleted =
           Array.isArray(result.deleted) && result.deleted.length > 0 ? result.deleted : ids
         const deletedIds = new Set(deleted.map((id) => Number(id)))
-        this.removeMailsLocally(Array.from(deletedIds))
         if (this.activeMail && deletedIds.has(this.activeMail.id)) {
           this.clearActiveMailState()
         }
-        this.selectedIds = []
-        this.refreshMailUiState()
+        await this.resetMailQueryToInbox({ preserveSort: true })
         await this.refreshStatsAfterMutation()
         const missing = Array.isArray(result.missing) ? result.missing : []
         if (missing.length > 0) {
@@ -3066,31 +3135,20 @@ function createMailAppState() {
 
     async markSelectedAsRead() {
       if (!this.selectedIds.length) return
-      if (!this.canUseAdminActions) {
-        this.showError('当前密钥为只读，无法批量标记已读')
-        return
-      }
       const ids = [...this.selectedIds]
       try {
         await this.apiFetch('/api/admin/messages/read', {
           method: 'PUT',
           body: JSON.stringify({ ids: ids, read: 1 }),
         })
-        ids.forEach((id) => this.markAsReadLocal(id))
-        this.selectedIds = []
+        await this.reconcileMailReadMutation(ids, {
+          preserveActiveMailOnMissing: false,
+          clearSelection: true,
+        })
         await this.refreshStatsAfterMutation()
       } catch (e) {
         this.showError('标记阅读失败')
       }
-    },
-
-    markAsReadLocal(id) {
-      const mail = this.mails.find((m) => m.id === id)
-      if (mail) mail.is_read = 1
-      if (this.activeMailDetail && this.activeMailDetail.id === id) {
-        this.activeMailDetail.is_read = 1
-      }
-      this.refreshMailUiState()
     },
 
     // --- Utils --- //

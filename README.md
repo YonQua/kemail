@@ -314,6 +314,7 @@ npm install -g wrangler@latest
 - 公开主链返回统一的 canonical message envelope：`preview + content{text,html,source} + artifacts{codes,links}`
 - 管理控制台与内部脚本统一走 `/api/admin/messages*`，不再依赖 `/api/latest`、`/api/emails/{id}`、`?rich=1` 或 `/source` 这类隐藏升级链路
 - 管理收件箱列表 `GET /api/admin/messages` 现使用 cursor 分页，响应分页元信息统一放在 `page_info`，不再保留旧的 `result_info` 兼容字段
+- 管理收件箱的地址、关键词、仅未读、仅星标与排序现统一走 `/api/admin/messages` 服务端查询参数：`address / q / unread / starred / sort / cursor`
 - `GET /api/version` 仅用于手工确认线上实例当前跑的是哪一版，不属于公开主链契约
 - Workers KV 只承担未鉴权 API 的防刷限流
 - 已鉴权请求按 admin-read / read / write / analysis 四类走 Worker 进程内限流，不再持续写入 Workers KV

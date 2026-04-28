@@ -174,6 +174,14 @@ async function handleAdminMessageListRequest(request, env, url, path) {
   const sender = normalizeText(url.searchParams.get('sender'))
   const subject = normalizeText(url.searchParams.get('subject'))
   const query = normalizeText(url.searchParams.get('q'))
+  const unread = parseBooleanFlag(url.searchParams.get('unread'), false)
+  if (unread == null) {
+    return jsonResponse({ ok: false, error: 'Invalid unread' }, 400)
+  }
+  const starred = parseBooleanFlag(url.searchParams.get('starred'), false)
+  if (starred == null) {
+    return jsonResponse({ ok: false, error: 'Invalid starred' }, 400)
+  }
   const start = parseDateParam(url.searchParams.get('start'))
   const end = parseDateParam(url.searchParams.get('end'))
   const cursor = parseMessageCursor(url.searchParams.get('cursor'))
@@ -186,6 +194,8 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       sender,
       subject,
       query,
+      unread,
+      starred,
       start,
       end,
       cursor,
@@ -197,6 +207,8 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       sender,
       subject,
       query,
+      unread,
+      starred,
       start,
       end,
     })
@@ -239,6 +251,8 @@ async function handleAdminMessageListRequest(request, env, url, path) {
       sender,
       subject,
       query,
+      unread,
+      starred,
       start,
       end,
       cursor: cursor ? `${cursor.receivedAt}|${cursor.id}` : '',
