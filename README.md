@@ -310,7 +310,7 @@ npm install -g wrangler@latest
 ## 运行时行为
 
 - `POST /api/mailboxes` 是公开发号入口
-- `POST /api/messages/next` 是公开消费入口；请求体使用 `effect = none | mark_read | delete`，并可通过 `include_source` 决定是否返回原始 MIME
+- `POST /api/messages/next` 是公开消费入口；请求体使用 `address`、`sender_contains` 或两者共同筛选下一封邮件，使用 `effect = none | mark_read | delete` 控制消费动作，并可通过 `include_source` 决定是否返回原始 MIME
 - 公开主链返回统一的 canonical message envelope：`preview + content{text,html,source} + artifacts{codes,links}`
 - 管理控制台与内部脚本统一走 `/api/admin/messages*`，不再依赖 `/api/latest`、`/api/emails/{id}`、`?rich=1` 或 `/source` 这类隐藏升级链路
 - 管理收件箱列表 `GET /api/admin/messages` 现使用 cursor 分页，响应分页元信息统一放在 `page_info`，不再保留旧的 `result_info` 兼容字段

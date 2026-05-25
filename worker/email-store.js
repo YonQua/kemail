@@ -37,6 +37,39 @@ function normalizeBooleanFlag(value) {
   return Boolean(Number(value || 0))
 }
 
+function escapeSqlLike(value) {
+  return String(value || '').replace(/[\\%_]/g, '\\$&')
+}
+
+function buildNextMessageSelector(options = {}) {
+  const recipient = normalizeAddress(options?.recipient)
+  const senderContains = normalizeText(options?.senderContains)
+  const unreadOnly = options?.unreadOnly === true
+  const conditions = []
+  const params = []
+
+  if (recipient) {
+    conditions.push('recipient = ?')
+    params.push(recipient)
+  }
+
+  if (senderContains) {
+    conditions.push(`sender LIKE ? ESCAPE '\\'`)
+    params.push(`%${escapeSqlLike(senderContains)}%`)
+  }
+
+  if (unreadOnly) {
+    conditions.push('is_read = 0')
+  }
+
+  if (!recipient && !senderContains) return null
+
+  return {
+    whereClause: `WHERE ${conditions.join(' AND ')}`,
+    params,
+  }
+}
+
 function buildMessageEnvelope(row, options = {}) {
   if (!row || typeof row !== 'object') return null
 
@@ -132,22 +165,27 @@ export async function insertMessage(env, message) {
     .run()
 }
 
-export async function selectLatestMessageRow(env, recipient, options = {}) {
-  const unreadOnly = options?.unreadOnly === true
-  const sql = unreadOnly
-    ? `SELECT ${MESSAGE_DETAIL_FIELDS} FROM ${MESSAGE_TABLE} WHERE recipient = ? AND is_read = 0 ORDER BY received_at DESC, id DESC LIMIT 1`
-    : `SELECT ${MESSAGE_DETAIL_FIELDS} FROM ${MESSAGE_TABLE} WHERE recipient = ? ORDER BY received_at DESC, id DESC LIMIT 1`
-
-  return env.DB.prepare(sql).bind(recipient).first()
-}
-
-export async function consumeLatestMessageRow(env, recipient, options = {}) {
-  const unreadOnly = options?.unreadOnly === true
+export async function consumeLatestMessageRow(env, options = {}) {
   const effect = normalizeText(options?.effect || 'none').toLowerCase()
-  const selectorWhere = unreadOnly ? 'recipient = ? AND is_read = 0' : 'recipient = ?'
+  const selector = buildNextMessageSelector(options)
+
+  if (!selector) return null
+
+  const selectorSql = `
+    SELECT id FROM ${MESSAGE_TABLE}
+    ${selector.whereClause}
+    ORDER BY received_at DESC, id DESC
+    LIMIT 1
+  `
 
   if (effect === 'none') {
-    return selectLatestMessageRow(env, recipient, { unreadOnly })
+    return env.DB.prepare(
+      `SELECT ${MESSAGE_DETAIL_FIELDS}
+       FROM ${MESSAGE_TABLE}
+       WHERE id = (${selectorSql})`
+    )
+      .bind(...selector.params)
+      .first()
   }
 
   if (effect === 'mark_read') {
@@ -155,11 +193,11 @@ export async function consumeLatestMessageRow(env, recipient, options = {}) {
       `UPDATE ${MESSAGE_TABLE}
        SET is_read = 1
        WHERE id = (
-         SELECT id FROM ${MESSAGE_TABLE} WHERE ${selectorWhere} ORDER BY received_at DESC, id DESC LIMIT 1
+         ${selectorSql}
        )
        RETURNING ${MESSAGE_DETAIL_FIELDS}`
     )
-      .bind(recipient)
+      .bind(...selector.params)
       .first()
   }
 
@@ -167,11 +205,11 @@ export async function consumeLatestMessageRow(env, recipient, options = {}) {
     return env.DB.prepare(
       `DELETE FROM ${MESSAGE_TABLE}
        WHERE id = (
-         SELECT id FROM ${MESSAGE_TABLE} WHERE ${selectorWhere} ORDER BY received_at DESC, id DESC LIMIT 1
+         ${selectorSql}
        )
        RETURNING ${MESSAGE_DETAIL_FIELDS}`
     )
-      .bind(recipient)
+      .bind(...selector.params)
       .first()
   }
 

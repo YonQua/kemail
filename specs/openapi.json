@@ -1617,7 +1617,7 @@
           "external-core"
         ],
         "summary": "消费下一封邮件",
-        "description": "按完整邮箱地址读取下一封邮件，并可通过 effect 控制是否顺便标记已读或删除。",
+        "description": "按 address、sender_contains 或两者共同筛选下一封邮件，并可通过 effect 控制是否顺便标记已读或删除。address 与 sender_contains 至少提供一个。",
         "security": [
           {
             "BearerAuth": []
@@ -1632,6 +1632,10 @@
                 "properties": {
                   "address": {
                     "type": "string"
+                  },
+                  "sender_contains": {
+                    "type": "string",
+                    "description": "可选的发件人包含匹配条件；与 address 同时提供时取交集。"
                   },
                   "unread_only": {
                     "type": "boolean",
@@ -1651,14 +1655,38 @@
                     "default": false
                   }
                 },
-                "required": [
-                  "address"
+                "anyOf": [
+                  {
+                    "required": [
+                      "address"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sender_contains"
+                    ]
+                  }
                 ]
               },
+              "example": {
+                "address": "inbox@example.test",
+                "sender_contains": "forwarded-alias@example.test",
+                "effect": "delete",
+                "include_source": false
+              },
               "examples": {
-                "delete_after_read": {
+                "sender_only": {
+                  "summary": "只按转发 alias 消费",
                   "value": {
-                    "address": "oc1234567890@example.test",
+                    "sender_contains": "forwarded-alias@example.test",
+                    "effect": "delete",
+                    "include_source": false
+                  }
+                },
+                "address_only": {
+                  "summary": "旧版按收件人消费",
+                  "value": {
+                    "address": "inbox@example.test",
                     "effect": "delete",
                     "include_source": false
                   }

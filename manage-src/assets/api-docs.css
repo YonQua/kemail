@@ -636,6 +636,27 @@
   overflow: hidden;
 }
 
+.docs-view__request-examples {
+  display: grid;
+  gap: 12px;
+}
+
+.docs-view__request-example {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-panel-solid) 96%, transparent);
+  overflow: hidden;
+}
+
+.docs-view__request-example > span {
+  display: block;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .docs-view__code-tabs {
   display: flex;
   flex-wrap: wrap;

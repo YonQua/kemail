@@ -37,6 +37,38 @@
     return null
   }
 
+  function readMediaExamples(media) {
+    if (!media || typeof media !== 'object') return []
+    const entries = []
+
+    if (Object.prototype.hasOwnProperty.call(media, 'example')) {
+      entries.push({ key: 'example', label: '推荐示例', value: media.example })
+    }
+
+    const examples = media.examples
+    if (examples && typeof examples === 'object') {
+      entries.push(
+        ...Object.entries(examples)
+          .filter(([, item]) => item && Object.prototype.hasOwnProperty.call(item, 'value'))
+          .map(([key, item]) => ({
+            key,
+            label: item.summary || key,
+            value: item.value,
+          }))
+      )
+    }
+
+    if (
+      entries.length === 0 &&
+      media.schema &&
+      Object.prototype.hasOwnProperty.call(media.schema, 'example')
+    ) {
+      entries.push({ key: 'schema-example', label: '示例', value: media.schema.example })
+    }
+
+    return entries
+  }
+
   function getOperationParameters(pathItem, operation) {
     const pathParameters = Array.isArray(pathItem?.parameters) ? pathItem.parameters : []
     const operationParameters = Array.isArray(operation?.parameters) ? operation.parameters : []
@@ -254,13 +286,26 @@
     if (!requestBody?.content?.['application/json']) return ''
 
     const media = requestBody.content['application/json']
-    const example = readMediaExample(media)
+    const examples = readMediaExamples(media)
     const description = requestBody.description || 'JSON 请求体'
 
     return `<section class="docs-view__block">
       <h4>请求体</h4>
       <p class="docs-view__callout">${escapeHtml(description)}${requestBody.required ? '（必填）' : '（可选）'}</p>
-      ${example == null ? '' : renderCodeBlock(prettyJson(example), '复制示例')}
+      ${
+        examples.length === 0
+          ? ''
+          : `<div class="docs-view__request-examples">
+              ${examples
+                .map(
+                  (example) => `<div class="docs-view__request-example">
+                    <span>${escapeHtml(example.label)}</span>
+                    ${renderCodeBlock(prettyJson(example.value), '复制示例')}
+                  </div>`
+                )
+                .join('')}
+            </div>`
+      }
     </section>`
   }
 

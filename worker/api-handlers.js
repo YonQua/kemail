@@ -113,8 +113,14 @@ async function parseMessagesNextPayload(request, path) {
   }
 
   const address = normalizeAddress(payload?.address)
-  if (!address) {
-    return { errorResponse: jsonResponse({ ok: false, error: 'Missing address' }, 400) }
+  const senderContains = normalizeText(payload?.sender_contains)
+  if (!address && !senderContains) {
+    return {
+      errorResponse: jsonResponse(
+        { ok: false, error: 'Missing selector: address or sender_contains required' },
+        400
+      ),
+    }
   }
 
   const unreadOnly = parseBooleanFlag(payload?.unread_only, true)
@@ -134,6 +140,7 @@ async function parseMessagesNextPayload(request, path) {
 
   return {
     address,
+    senderContains,
     unreadOnly,
     includeSource,
     effect,
@@ -142,12 +149,17 @@ async function parseMessagesNextPayload(request, path) {
 }
 
 async function handleMessagesNextRequest(request, env, path) {
-  const { address, unreadOnly, includeSource, effect, errorResponse } =
+  const { address, senderContains, unreadOnly, includeSource, effect, errorResponse } =
     await parseMessagesNextPayload(request, path)
   if (errorResponse) return errorResponse
 
   try {
-    const row = await consumeLatestMessageRow(env, address, { unreadOnly, effect })
+    const row = await consumeLatestMessageRow(env, {
+      recipient: address,
+      senderContains,
+      unreadOnly,
+      effect,
+    })
     if (!row) {
       return jsonResponse({ ok: true, message: null })
     }
@@ -164,7 +176,14 @@ async function handleMessagesNextRequest(request, env, path) {
     if (isMessagesTableMissing(error)) {
       return missingMessagesTableResponse()
     }
-    logError('Message next failed', error, { path, address, unreadOnly, includeSource, effect })
+    logError('Message next failed', error, {
+      path,
+      address,
+      senderContains,
+      unreadOnly,
+      includeSource,
+      effect,
+    })
     return jsonResponse({ ok: false, error: 'Internal error' }, 500)
   }
 }

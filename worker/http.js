@@ -37,6 +37,7 @@ export function resolveStaticAssetPath(path) {
 export function getStaticAssetHeaders(pathname) {
   if (pathname === '/' || pathname.endsWith('.html')) {
     return {
+      'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       ...HTML_SECURITY_HEADERS,
     }
@@ -44,6 +45,7 @@ export function getStaticAssetHeaders(pathname) {
 
   if (pathname.endsWith('.json')) {
     return {
+      'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
       ...RESPONSE_SECURITY_HEADERS,
     }
