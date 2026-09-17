@@ -39,7 +39,7 @@
 
 ## 环境要求
 
-- Node.js 20+
+- Node.js 22+
 - npm
 - Wrangler CLI
 - 一个已接入 Cloudflare 的域名
