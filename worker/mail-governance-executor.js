@@ -1,5 +1,5 @@
 import { AUTO_CLEAN_DAYS, DEFAULT_CLEANUP_RULE_DELETE_BATCH_SIZE } from './constants.js'
-import { MESSAGE_TABLE, deleteMessagesByIds } from './email-store.js'
+import { MESSAGE_TABLE, deleteMessagesByIds, escapeSqlLike } from './email-store.js'
 import {
   GovernanceTablesMissingError,
   hasCleanupRuleMatcher,
@@ -30,13 +30,13 @@ function buildCleanupRuleWhere(rule) {
   }
 
   if (normalizedRule.sender_contains) {
-    conditions.push('sender LIKE ?')
-    params.push(`%${normalizedRule.sender_contains}%`)
+    conditions.push(`sender LIKE ? ESCAPE '\\'`)
+    params.push(`%${escapeSqlLike(normalizedRule.sender_contains)}%`)
   }
 
   if (normalizedRule.subject_contains) {
-    conditions.push('subject LIKE ?')
-    params.push(`%${normalizedRule.subject_contains}%`)
+    conditions.push(`subject LIKE ? ESCAPE '\\'`)
+    params.push(`%${escapeSqlLike(normalizedRule.subject_contains)}%`)
   }
 
   return {
@@ -154,11 +154,10 @@ export async function executeCleanupRule(env, rule, options = {}) {
   while (true) {
     const ids = await listEmailIdsByWhereClause(env, whereClause, params, batchSize)
     if (ids.length === 0) break
-    await deleteMessagesByIds(env, ids)
-    deletedCount += ids.length
+    const result = await deleteMessagesByIds(env, ids)
+    deletedCount += Number(result?.meta?.changes || 0)
     if (ids.length < batchSize) break
   }
-
 
   if (persistRuleStatus && rule?.id) {
     await updateCleanupRuleRunStatus(env, rule.id, {

@@ -82,40 +82,28 @@ function formatCleanupRuleRow(row) {
   }
 }
 
-async function firstRowOrThrowMissingTable(statement) {
+async function withGovernanceTables(operation) {
   try {
-    return await statement.first()
+    return await operation()
   } catch (error) {
     const message = String(error?.message || '')
-    if (message.includes('mail_governance_settings') || message.includes('mail_cleanup_rules')) {
+    if (/no such table: (?:mail_governance_settings|mail_cleanup_rules)\b/.test(message)) {
       throw new GovernanceTablesMissingError(message)
     }
     throw error
   }
 }
 
-async function runOrThrowMissingTable(statement) {
-  try {
-    return await statement.run()
-  } catch (error) {
-    const message = String(error?.message || '')
-    if (message.includes('mail_governance_settings') || message.includes('mail_cleanup_rules')) {
-      throw new GovernanceTablesMissingError(message)
-    }
-    throw error
-  }
+function firstRowOrThrowMissingTable(statement) {
+  return withGovernanceTables(() => statement.first())
 }
 
-async function allRowsOrThrowMissingTable(statement) {
-  try {
-    return await statement.all()
-  } catch (error) {
-    const message = String(error?.message || '')
-    if (message.includes('mail_governance_settings') || message.includes('mail_cleanup_rules')) {
-      throw new GovernanceTablesMissingError(message)
-    }
-    throw error
-  }
+function runOrThrowMissingTable(statement) {
+  return withGovernanceTables(() => statement.run())
+}
+
+function allRowsOrThrowMissingTable(statement) {
+  return withGovernanceTables(() => statement.all())
 }
 
 export function normalizeGovernanceSettingsInput(input = {}) {

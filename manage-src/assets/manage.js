@@ -2657,10 +2657,10 @@ function createMailAppState() {
       const allSelected = visibleIds.every((id) => selected.has(id))
       if (allSelected) {
         this.selectedIds = this.selectedIds.filter((id) => !visibleIds.includes(String(id)))
-        return
+      } else {
+        visibleIds.forEach((id) => selected.add(id))
+        this.selectedIds = Array.from(selected)
       }
-      visibleIds.forEach((id) => selected.add(id))
-      this.selectedIds = Array.from(selected)
       this.refreshMailUiState()
     },
 
@@ -2699,6 +2699,7 @@ function createMailAppState() {
         sender_name: senderName,
         received_label: this.formatDate(mail.received_at),
         subject_label: mail?.subject || '无主题',
+        delete_label: `删除邮件：${mail?.subject || '无主题'}`,
         preview_label: mail?.preview || '暂无预览文本...',
         avatar_initial: initial,
         avatar_class: this.getAvatarToneClass(mail.sender),
@@ -2780,6 +2781,8 @@ function createMailAppState() {
     },
 
     clearActiveMailState() {
+      this.detailRequestToken += 1
+      this.detailLoading = false
       this.activeMail = null
       this.activeMailDetail = null
       this.isMobileDrawerOpen = false
@@ -2788,11 +2791,50 @@ function createMailAppState() {
 
     // --- Reader logic --- //
 
+    async navigateMailByKey(event) {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return
+      if (event.target.closest('input, textarea, select, button, a, [contenteditable]')) return
+      const index = this.mails.findIndex((mail) => mail.id === this.activeMail?.id)
+      event.preventDefault()
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      const nextIndex = index < 0 ? (direction > 0 ? 0 : this.mails.length - 1) : index + direction
+      const mail = this.mails[nextIndex]
+      if (!mail) return
+      const card = this.$refs.mailList.querySelector(`.email-card[data-mail-id="${mail.id}"]`)
+      card?.focus({ preventScroll: true })
+      card?.closest('.email-row')?.scrollTo({ left: 0 })
+      card?.scrollIntoView({ block: 'center', inline: 'nearest' })
+      await this.openMail(mail)
+    },
+
+    resetMailSwipe(event) {
+      event.currentTarget.dataset.swiped = ''
+    },
+
+    trackMailSwipe(event) {
+      event.currentTarget.dataset.swiped = 'true'
+    },
+
+    async openMailByKey(event) {
+      if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+      event.preventDefault()
+      const mail = this.findMailById(this.readMailIdFromEvent(event))
+      if (mail) await this.openMail(mail)
+    },
+
     async openMailByEvent(event) {
+      const row = event.currentTarget.closest('.email-row')
+      if (row && (row.dataset.swiped || row.scrollLeft > 1)) {
+        row.dataset.swiped = ''
+        row.scrollTo({ left: 0, behavior: 'smooth' })
+        return
+      }
       const mailId = this.readMailIdFromEvent(event)
       if (!mailId) return
       const mail = this.findMailById(mailId)
       if (!mail) return
+      event.currentTarget.focus({ preventScroll: true })
       await this.openMail(mail)
     },
 
@@ -3085,19 +3127,58 @@ function createMailAppState() {
       this.refreshMailUiState()
     },
 
-    async deleteActiveMail() {
-      if (!this.activeMailDetail) return
-      if (!confirm('确定删除这封邮件吗？')) return
+    async deleteMailByEvent(event) {
+      const mail = this.findMailById(this.readMailIdFromEvent(event))
+      if (!mail) return
+      const button = event.currentTarget
+      if (button.disabled) return
+      button.disabled = true
+      try {
+        await this.deleteMail(mail)
+      } finally {
+        button.disabled = false
+      }
+    },
 
-      const id = this.activeMailDetail.id
+    async deleteActiveMail() {
+      if (this.activeMailDetail) await this.deleteMail(this.activeMailDetail)
+    },
+
+    async deleteMail(mail) {
+      if (!confirm(`确定删除邮件「${mail.subject || '无主题'}」吗？此操作不可撤销。`)) return
+      const id = mail.id
+      const list = this.$refs.mailList
       try {
         await this.apiFetch(`/api/admin/messages/${id}`, { method: 'DELETE' })
-        this.clearActiveMailState()
-        await this.resetMailQueryToInbox({ preserveSort: true })
+      } catch (e) {
+        this.showError('删除失败')
+        return
+      }
+
+      try {
+        const index = this.mails.findIndex((item) => item.id === id)
+        const wasActive = this.activeMail?.id === id
+        if (wasActive) {
+          this.clearActiveMailState()
+        }
+        const listRequestPending = this.isRefreshing || this.mailLoadingMore
+        this.mails = this.mails.filter((item) => item.id !== id)
+        this.selectedIds = this.selectedIds.filter((selectedId) => Number(selectedId) !== id)
+        if (index >= 0) this.mailServerTotal = Math.max(0, this.mailServerTotal - 1)
+        this.refreshMailUiState()
+        this.refreshMailListBoundaryState()
+        if (listRequestPending) {
+          await this.refetchCurrentMailQuery()
+        } else if (wasActive && this.mails.length) {
+          const next = this.mails[Math.max(0, Math.min(index, this.mails.length - 1))]
+          await this.$nextTick()
+          list.querySelector(`.email-card[data-mail-id="${next.id}"]`)?.focus({ preventScroll: true })
+          await this.openMail(next)
+        }
         await this.refreshStatsAfterMutation()
         this.showSuccess('邮件已删除')
       } catch (e) {
-        this.showError('删除失败')
+        this.showError('邮件已删除，但界面更新失败，请刷新列表')
       }
     },
 

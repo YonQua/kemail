@@ -10,10 +10,6 @@ export class ManagedDomainSyncGuardError extends Error {
   }
 }
 
-function buildIdPlaceholders(ids) {
-  return ids.map(() => '?').join(', ')
-}
-
 function formatManagedDomainRow(row) {
   if (!row || typeof row !== 'object') return null
 
@@ -50,9 +46,9 @@ export async function selectManagedDomainsByZoneIds(env, zoneIds) {
   if (!Array.isArray(zoneIds) || zoneIds.length === 0) return []
 
   const out = await env.DB.prepare(
-    `SELECT ${MANAGED_DOMAIN_FIELDS} FROM managed_domains WHERE zone_id IN (${buildIdPlaceholders(zoneIds)})`
+    `SELECT ${MANAGED_DOMAIN_FIELDS} FROM managed_domains WHERE zone_id IN (SELECT value FROM json_each(?))`
   )
-    .bind(...zoneIds)
+    .bind(JSON.stringify(zoneIds))
     .all()
 
   return (out.results || []).map(formatManagedDomainRow).filter(Boolean)
@@ -74,9 +70,9 @@ export async function updateManagedDomainsIssuable(env, zoneIds, issuableEnabled
   }
 
   return env.DB.prepare(
-    `UPDATE managed_domains SET issuable_enabled = ?, updated_at = ? WHERE zone_id IN (${buildIdPlaceholders(zoneIds)})`
+    `UPDATE managed_domains SET issuable_enabled = ?, updated_at = ? WHERE zone_id IN (SELECT value FROM json_each(?))`
   )
-    .bind(issuableEnabled ? 1 : 0, updatedAt, ...zoneIds)
+    .bind(issuableEnabled ? 1 : 0, updatedAt, JSON.stringify(zoneIds))
     .run()
 }
 
@@ -128,9 +124,9 @@ export async function syncManagedDomains(env, zones, syncedAt) {
            last_synced_at = ?,
            sync_error = ?,
            updated_at = ?
-       WHERE zone_id NOT IN (${buildIdPlaceholders(zoneIds)})`
+       WHERE zone_id NOT IN (SELECT value FROM json_each(?))`
     )
-      .bind('missing', syncedAt, 'Not returned by latest Cloudflare sync', syncedAt, ...zoneIds)
+      .bind('missing', syncedAt, 'Not returned by latest Cloudflare sync', syncedAt, JSON.stringify(zoneIds))
       .run()
   }
 

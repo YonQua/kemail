@@ -650,7 +650,8 @@
                     </div>
                 </div>
 
-                <div class="email-list" x-ref="mailList" @scroll="updateMailListBoundaryState">
+                <div class="email-list" x-ref="mailList" tabindex="0" aria-label="邮件列表，使用上下方向键切换阅读"
+                    @keydown="navigateMailByKey" @scroll="updateMailListBoundaryState">
                     <template x-if="isMailListEmpty">
                         <div class="detail-empty detail-empty-list">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -661,33 +662,39 @@
                     </template>
 
                     <template x-for="mail in mails" :key="mail.id">
-                        <div class="email-card" :class="mail.card_class" :data-mail-id="mail.id"
-                            @click="openMailByEvent">
-                            <div class="email-card-checkbox" @click.stop>
-                                <input type="checkbox" :checked="mail.is_selected" :data-mail-id="mail.id"
-                                    @change="toggleMailSelectionByEvent" class="mail-select-checkbox" />
-                            </div>
-                            <div class="email-avatar" :class="mail.avatar_class" x-text="mail.avatar_initial"></div>
-                            <div class="email-content">
-                                <div class="email-header">
-                                    <span class="email-sender" x-text="mail.sender_name"></span>
-                                    <span class="email-time" x-text="mail.received_label"></span>
+                        <div class="email-row" @pointerdown="resetMailSwipe" @scroll="trackMailSwipe">
+                            <div class="email-card" :class="mail.card_class" :data-mail-id="mail.id" tabindex="0"
+                                @click="openMailByEvent" @keydown="openMailByKey" :aria-label="mail.subject_label">
+                                <div class="email-card-checkbox" @click.stop>
+                                    <input type="checkbox" :checked="mail.is_selected" :data-mail-id="mail.id"
+                                        @change="toggleMailSelectionByEvent" class="mail-select-checkbox" />
                                 </div>
-                                <div class="email-subject" x-text="mail.subject_label"></div>
-                                <div class="email-preview" x-text="mail.preview_label"></div>
+                                <div class="email-avatar" :class="mail.avatar_class" x-text="mail.avatar_initial"></div>
+                                <div class="email-content">
+                                    <div class="email-header">
+                                        <span class="email-sender" x-text="mail.sender_name"></span>
+                                        <span class="email-time" x-text="mail.received_label"></span>
+                                    </div>
+                                    <div class="email-subject" x-text="mail.subject_label"></div>
+                                    <div class="email-preview" x-text="mail.preview_label"></div>
+                                </div>
+                                <div class="email-actions" @click.stop>
+                                    <template x-if="canUseAdminActions">
+                                        <button class="btn btn-icon star-btn" :class="mail.star_button_class"
+                                            :data-mail-id="mail.id" @click="toggleStarByEvent">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" :fill="mail.star_fill"
+                                                stroke="currentColor" stroke-width="2">
+                                                <polygon
+                                                    points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                                            </svg>
+                                        </button>
+                                    </template>
+                                </div>
                             </div>
-                            <div class="email-actions" @click.stop>
-                                <template x-if="canUseAdminActions">
-                                    <button class="btn btn-icon star-btn" :class="mail.star_button_class"
-                                        :data-mail-id="mail.id" @click="toggleStarByEvent">
-                                        <svg width="18" height="18" viewBox="0 0 24 24" :fill="mail.star_fill"
-                                            stroke="currentColor" stroke-width="2">
-                                            <polygon
-                                                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                                        </svg>
-                                    </button>
-                                </template>
-                            </div>
+                            <template x-if="authorized">
+                                <button type="button" class="email-delete-btn" :data-mail-id="mail.id"
+                                    @click.stop="deleteMailByEvent" :aria-label="mail.delete_label">删除</button>
+                            </template>
                         </div>
                     </template>
 

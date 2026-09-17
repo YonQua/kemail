@@ -28,7 +28,6 @@ import {
   isStaticAssetPath,
   isStaticDocumentPath,
   jsonResponse,
-  methodNotAllowed,
   optionsResponse,
 } from './worker/http.js'
 import { executeScheduledGovernance } from './worker/mail-governance-executor.js'

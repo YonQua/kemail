@@ -1374,6 +1374,40 @@ body {
 }
 
 /* Email Card Item - Grid Layout for no overlap */
+.email-row {
+  display: flex;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border-radius: var(--radius-md);
+}
+.email-row::-webkit-scrollbar {
+  display: none;
+}
+.email-row > .email-card {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.email-delete-btn {
+  flex: 0 0 72px;
+  scroll-snap-align: end;
+  scroll-snap-stop: always;
+  border: 0;
+  background: var(--warn);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+.email-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .email-card {
   display: grid;
   grid-template-columns: 18px 38px minmax(0, 1fr) 32px;

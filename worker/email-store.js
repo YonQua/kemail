@@ -6,10 +6,6 @@ export const MESSAGE_SUMMARY_FIELDS =
 export const MESSAGE_DETAIL_FIELDS =
   'id, recipient, sender, subject, preview_text, text_body, html_body, raw_source, headers_json, attachments_json, artifacts_json, source_available, source_truncated, parse_status, received_at, is_read, is_starred'
 
-function buildIdPlaceholders(ids) {
-  return ids.map(() => '?').join(', ')
-}
-
 function parseStoredJson(value, fallback) {
   if (typeof value !== 'string' || !value.trim()) return fallback
   try {
@@ -37,7 +33,7 @@ function normalizeBooleanFlag(value) {
   return Boolean(Number(value || 0))
 }
 
-function escapeSqlLike(value) {
+export function escapeSqlLike(value) {
   return String(value || '').replace(/[\\%_]/g, '\\$&')
 }
 
@@ -230,9 +226,9 @@ export async function selectMessageRecipientsByIds(env, ids) {
   if (!Array.isArray(ids) || ids.length === 0) return []
 
   const out = await env.DB.prepare(
-    `SELECT id, recipient FROM ${MESSAGE_TABLE} WHERE id IN (${buildIdPlaceholders(ids)})`
+    `SELECT id, recipient FROM ${MESSAGE_TABLE} WHERE id IN (SELECT value FROM json_each(?))`
   )
-    .bind(...ids)
+    .bind(JSON.stringify(ids))
     .all()
 
   return Array.isArray(out?.results) ? out.results : []
@@ -247,8 +243,8 @@ export async function deleteMessagesByIds(env, ids) {
     return { meta: { changes: 0 } }
   }
 
-  return env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE id IN (${buildIdPlaceholders(ids)})`)
-    .bind(...ids)
+  return env.DB.prepare(`DELETE FROM ${MESSAGE_TABLE} WHERE id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(ids))
     .run()
 }
 
@@ -258,9 +254,9 @@ async function updateMessageBooleanState(env, ids, column, value) {
   }
 
   return env.DB.prepare(
-    `UPDATE ${MESSAGE_TABLE} SET ${column} = ? WHERE id IN (${buildIdPlaceholders(ids)})`
+    `UPDATE ${MESSAGE_TABLE} SET ${column} = ? WHERE id IN (SELECT value FROM json_each(?))`
   )
-    .bind(value ? 1 : 0, ...ids)
+    .bind(value ? 1 : 0, JSON.stringify(ids))
     .run()
 }
 
