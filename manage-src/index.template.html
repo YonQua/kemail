@@ -15,7 +15,7 @@
     <script defer src="__ALPINE_JS__"></script>
 </head>
 
-<body x-data="mailApp" x-cloak>
+<body x-data="mailApp" x-cloak @pagehide.window="flushMailReads" @visibilitychange.document="flushMailReadsOnHidden">
 
     <!-- Fullscreen Auth Overlay -->
     <div class="auth-overlay" :class="authOverlayClass">
@@ -753,7 +753,7 @@
                     </template>
 
                     <template x-if="showDetailContent">
-                        <div class="detail-content-stack">
+                        <div class="detail-content-stack" x-show="!detailLoading">
                             <!-- Envelope Info -->
                             <div class="mail-header-info">
                                 <h3 class="mail-subject-large" x-text="detailSubjectLabel"></h3>

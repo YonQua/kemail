@@ -22,6 +22,9 @@ const ACTION_LINK_MIN_SCORE = 6
 const GOVERNANCE_REFRESH_INTERVAL_MS = 20 * 1000
 const DEFAULT_GOVERNANCE_RETENTION_DAYS = 3
 const MAIL_PAGE_SIZE = 50
+const MAIL_READ_BATCH_DELAY_MS = 150
+const MAIL_READ_INTERVAL_MS = 1100
+const MAIL_READ_BATCH_SIZE = 100
 const AUTH_STORAGE_VERSION = 1
 const AUTH_STORAGE_KEYS = Object.freeze({
   session: 'kemail.console.auth.session',
@@ -292,12 +295,32 @@ function isGovernanceMigrationError(error) {
   )
 }
 
+function compareMailOrder(a, b, sort) {
+  const timeOrder = a.received_at < b.received_at ? -1 : a.received_at > b.received_at ? 1 : 0
+  const order = timeOrder || a.id - b.id
+  return sort === 'asc' ? order : -order
+}
+
+function findAdjacentMail(mails, activeMail, direction, sort) {
+  if (!activeMail) {
+    return (direction > 0 ? mails[0] : mails[mails.length - 1]) || null
+  }
+  if (direction > 0) {
+    return mails.find((mail) => compareMailOrder(mail, activeMail, sort) > 0) || null
+  }
+  for (let index = mails.length - 1; index >= 0; index -= 1) {
+    if (compareMailOrder(mails[index], activeMail, sort) < 0) return mails[index]
+  }
+  return null
+}
+
 function buildApiError(response, data, text) {
   const error = new Error(
     (data && (data.error || data.message)) || text || `Server Error: ${response?.status || 500}`
   )
   error.status = Number(response?.status || 0)
   error.code = String(data?.code || '')
+  error.retryAfterSeconds = Number(response?.headers?.get('Retry-After') || 0)
   return error
 }
 
@@ -588,6 +611,12 @@ function createMailAppState() {
     detailLoading: false,
     renderMode: 'text', // 'html', 'text', 'source'
     detailRequestToken: 0,
+    pendingMailReadIds: new Set(),
+    inflightMailReadIds: new Set(),
+    confirmedMailReadIds: new Set(),
+    mailReadTimer: null,
+    mailReadNotBefore: 0,
+    mailReadEpoch: 0,
     showAllActionLinks: false,
 
     // Internal
@@ -628,6 +657,14 @@ function createMailAppState() {
     // --- Authentication --- //
 
     resetWorkspaceState() {
+      this.mailReadEpoch += 1
+      this.mailReadNotBefore = 0
+      clearTimeout(this.mailReadTimer)
+      this.mailReadTimer = null
+      this.pendingMailReadIds.clear()
+      this.inflightMailReadIds.clear()
+      this.confirmedMailReadIds.clear()
+      this.clearActiveMailState()
       this.clearGlobalNotice()
       this.stats = createDefaultStatsState()
       this.statsNeedsRefresh = false
@@ -662,13 +699,12 @@ function createMailAppState() {
       this.docsRequestToken += 1
       this.resetGovernanceState()
       this.activeTab = 'inbox'
-      this.activeMail = null
-      this.activeMailDetail = null
       this.mailLoadingMore = false
       this.mailNextCursor = ''
       this.mailHasMore = false
       this.mailListReachedEnd = false
-      this.mailRequestToken = 0
+      this.mailRequestToken += 1
+      this.isRefreshing = false
       this.mailServerTotal = 0
       this.refreshHint = ''
       if (this.refreshHintTimer) {
@@ -797,6 +833,7 @@ function createMailAppState() {
       const nextQuery = normalizeMailQuery(this.mailQueryDraft)
       this.mailQueryDraft = { ...nextQuery }
       this.mailQueryApplied = { ...nextQuery }
+      this.clearActiveMailState()
       this.clearSelectedIds()
       await this.fetchMails()
     },
@@ -808,6 +845,7 @@ function createMailAppState() {
       }
       this.mailQueryDraft = { ...nextQuery }
       this.mailQueryApplied = { ...nextQuery }
+      this.clearActiveMailState()
       this.clearSelectedIds()
       await this.fetchMails()
     },
@@ -844,7 +882,10 @@ function createMailAppState() {
 
       const pageInfo = normalizeMailPageInfo(data)
       const messages = Array.isArray(data?.messages) ? data.messages : []
-      const decorated = messages.map((mail) => this.decorateMailSummary(mail))
+      // Merge reads confirmed since the last full refresh so older responses cannot undo them.
+      const decorated = messages.map((mail) => this.decorateMailSummary(
+        this.confirmedMailReadIds.has(mail.id) ? { ...mail, is_read: 1 } : mail
+      ))
 
       this.mailServerTotal = pageInfo.totalCount
       this.mailNextCursor = pageInfo.nextCursor
@@ -854,6 +895,9 @@ function createMailAppState() {
       }
       this.mails = options.append ? mergeMailSummaries(this.mails, decorated) : decorated
       this.syncActiveMailReference()
+      if (this.mailQueryApplied.unread) {
+        this.removeMailsFromList(this.mails.filter((mail) => mail.is_read).map((mail) => mail.id))
+      }
       this.refreshMailUiState()
       this.refreshMailListBoundaryState()
     },
@@ -2491,7 +2535,8 @@ function createMailAppState() {
 
     // --- Mail List & Actions --- //
 
-    async fetchMails(options = {}) {
+    async fetchMails() {
+      this.confirmedMailReadIds.clear()
       this.isRefreshing = true
       this.mailLoadingMore = false
       this.mailListReachedEnd = false
@@ -2516,15 +2561,6 @@ function createMailAppState() {
           this.refreshHint = ''
           this.refreshHintTimer = null
         }, 1500)
-
-        // Clear active if not in list
-        if (
-          this.activeMail &&
-          !this.findMailById(this.activeMail.id) &&
-          options.preserveActiveMailOnMissing !== true
-        ) {
-          this.clearActiveMailState()
-        }
       } catch (e) {
         if (requestToken !== this.mailRequestToken) return
         this.refreshHint = '刷新失败'
@@ -2540,14 +2576,9 @@ function createMailAppState() {
       }
     },
 
-    async refetchCurrentMailQuery(options = {}) {
+    async refetchCurrentMailQuery() {
       this.clearSelectedIds()
-      if (options.clearActiveMail === true) {
-        this.clearActiveMailState()
-      }
-      await this.fetchMails({
-        preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
-      })
+      await this.fetchMails()
     },
 
     async loadMoreMails() {
@@ -2595,7 +2626,7 @@ function createMailAppState() {
       return { 'btn-primary': this.mailQueryApplied.starred }
     },
     get mailCountLabel() {
-      return `已加载 ${this.mails.length} / ${this.mailServerTotal} 封邮件`
+      return `已加载 ${this.mails.length} 封 · 查询时共 ${this.mailServerTotal} 封`
     },
     get showLoadMoreMails() {
       return this.mailLoadingMore || (this.mailHasMore && this.mailListReachedEnd)
@@ -2613,7 +2644,7 @@ function createMailAppState() {
       return this.selectedIds.length
     },
     get isMailListEmpty() {
-      return this.mails.length === 0
+      return this.mails.length === 0 && !this.mailHasMore
     },
     get mailEmptyStateLabel() {
       return this.hasAppliedMailFilters ? '没有匹配当前筛选条件的邮件' : '没有找到邮件'
@@ -2795,11 +2826,13 @@ function createMailAppState() {
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return
       if (event.target.closest('input, textarea, select, button, a, [contenteditable]')) return
-      const index = this.mails.findIndex((mail) => mail.id === this.activeMail?.id)
       event.preventDefault()
-      const direction = event.key === 'ArrowDown' ? 1 : -1
-      const nextIndex = index < 0 ? (direction > 0 ? 0 : this.mails.length - 1) : index + direction
-      const mail = this.mails[nextIndex]
+      const mail = findAdjacentMail(
+        this.mails,
+        this.activeMail,
+        event.key === 'ArrowDown' ? 1 : -1,
+        this.mailQueryApplied.sort
+      )
       if (!mail) return
       const card = this.$refs.mailList.querySelector(`.email-card[data-mail-id="${mail.id}"]`)
       card?.focus({ preventScroll: true })
@@ -2841,6 +2874,7 @@ function createMailAppState() {
     async openMail(mail) {
       const requestToken = ++this.detailRequestToken
       this.activeMail = this.findMailById(mail.id) || mail
+      this.queueMailRead(mail.id)
       this.refreshMailUiState()
       this.detailLoading = true
       this.isMobileDrawerOpen = true // Open drawer on mobile
@@ -2855,17 +2889,13 @@ function createMailAppState() {
           return
         }
         const preparedDetail = this.decorateMailDetail(data.message || {})
+        if (this.confirmedMailReadIds.has(mail.id) || this.activeMail.is_read) {
+          preparedDetail.is_read = 1
+        }
         this.activeMailDetail = preparedDetail
         this.showAllActionLinks = false
         this.renderMode = this.activeMailDetail.content?.html ? 'html' : 'text'
         this.resetDetailScroll()
-        if (!preparedDetail.is_read) {
-          await this.markMailAsRead(mail.id, {
-            preserveActiveMailOnMissing: true,
-            silentSuccess: true,
-            silentForbidden: true,
-          })
-        }
       } catch (e) {
         if (requestToken !== this.detailRequestToken) return
         this.showError('邮件详情加载失败')
@@ -2890,60 +2920,100 @@ function createMailAppState() {
           mail.is_read = read ? 1 : 0
         }
       })
+      if (this.activeMail && idSet.has(this.activeMail.id)) {
+        this.activeMail.is_read = read ? 1 : 0
+      }
       if (this.activeMailDetail && idSet.has(this.activeMailDetail.id)) {
         this.activeMailDetail.is_read = read ? 1 : 0
       }
       this.refreshMailUiState()
     },
 
-    async reconcileMailReadMutation(ids, options = {}) {
-      if (this.mailQueryApplied.unread) {
-        await this.refetchCurrentMailQuery({
-          preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
-        })
-        return
-      }
-
-      this.applyMailReadStateLocally(ids, 1)
-      if (options.clearSelection !== false) {
-        this.clearSelectedIds()
-      }
+    commitMailRead(ids) {
+      ids.forEach((id) => this.confirmedMailReadIds.add(id))
+      this.applyMailReadStateLocally(ids)
+      if (this.mailQueryApplied.unread) this.removeMailsFromList(ids)
+      void this.refreshStatsAfterMutation()
     },
 
-    async markMailAsRead(mailId, options = {}) {
-      const normalizedId = parseInt(String(mailId || ''), 10)
-      if (!Number.isFinite(normalizedId) || normalizedId < 1) return false
-      if (!this.authorized) return false
-
-      const listMail = this.findMailById(normalizedId)
-      const detailMatches = this.activeMailDetail && this.activeMailDetail.id === normalizedId
-      if (listMail?.is_read || (detailMatches && this.activeMailDetail?.is_read)) {
-        return true
+    removeMailsFromList(ids) {
+      const idSet = new Set(ids)
+      const removed = this.mails.filter((mail) => idSet.has(mail.id))
+      if (!removed.length) return
+      const removedIds = new Set(removed.map((mail) => mail.id))
+      const focusedCard = document.activeElement?.closest('.email-card')
+      const restoreFocus = focusedCard && this.$refs.mailList.contains(focusedCard)
+        && removedIds.has(Number(focusedCard.dataset.mailId))
+      this.mails = this.mails.filter((mail) => !removedIds.has(mail.id))
+      this.selectedIds = this.selectedIds.filter((id) => !removedIds.has(Number(id)))
+      if (restoreFocus) {
+        this.$nextTick(() => {
+          if (document.activeElement === document.body || document.activeElement === focusedCard) {
+            this.$refs.mailList.focus({ preventScroll: true })
+          }
+        })
       }
+      this.refreshMailListBoundaryState()
+    },
 
+    queueMailRead(mailId) {
+      if (!Number.isSafeInteger(mailId) || mailId < 1) return
+      if (!this.authorized || this.findMailById(mailId)?.is_read
+        || this.confirmedMailReadIds.has(mailId) || this.inflightMailReadIds.has(mailId)) return
+      this.pendingMailReadIds.add(mailId)
+      this.scheduleMailReads()
+    },
+
+    scheduleMailReads() {
+      if (this.mailReadTimer !== null || this.inflightMailReadIds.size || !this.pendingMailReadIds.size) return
+      const delay = Math.max(MAIL_READ_BATCH_DELAY_MS, this.mailReadNotBefore - Date.now())
+      this.mailReadTimer = setTimeout(() => this.flushMailReads(), delay)
+    },
+
+    flushMailReadsOnHidden() {
+      if (document.hidden) this.flushMailReads()
+    },
+
+    async flushMailReads() {
+      clearTimeout(this.mailReadTimer)
+      this.mailReadTimer = null
+      if (!this.authorized || !this.pendingMailReadIds.size || this.inflightMailReadIds.size) return
+      if (Date.now() < this.mailReadNotBefore) {
+        this.scheduleMailReads()
+        return
+      }
+      const epoch = this.mailReadEpoch
+      const ids = [...this.pendingMailReadIds].slice(0, MAIL_READ_BATCH_SIZE)
+      ids.forEach((id) => {
+        this.pendingMailReadIds.delete(id)
+        this.inflightMailReadIds.add(id)
+      })
+      // Share the write budget with other console actions; 429 supplies the server's cooldown.
+      this.mailReadNotBefore = Date.now() + MAIL_READ_INTERVAL_MS
       try {
         await this.apiFetch('/api/admin/messages/read', {
           method: 'PUT',
-          body: JSON.stringify({ ids: [normalizedId], read: 1 }),
+          body: JSON.stringify({ ids, read: 1 }),
+          keepalive: true,
         })
-        await this.reconcileMailReadMutation([normalizedId], {
-          preserveActiveMailOnMissing: options.preserveActiveMailOnMissing === true,
-          clearSelection: false,
-        })
-        await this.refreshStatsAfterMutation()
-        if (!options.silentSuccess) {
-          this.showSuccess('已标记为已读')
+        if (epoch !== this.mailReadEpoch) return
+        this.commitMailRead(ids)
+      } catch (error) {
+        if (epoch !== this.mailReadEpoch) return
+        if (error.status === 429) {
+          ids.forEach((id) => this.pendingMailReadIds.add(id))
+          const retrySeconds = Number.isFinite(error.retryAfterSeconds) && error.retryAfterSeconds > 0
+            ? error.retryAfterSeconds : 60
+          this.mailReadNotBefore = Date.now() + retrySeconds * 1000
+          this.showError('标记已读暂时受限，将在限制解除后重试')
+        } else {
+          this.showError('标记阅读失败，请重新打开邮件或批量标记重试')
         }
-        return true
-      } catch (e) {
-        if (
-          options.silentForbidden === true &&
-          (e.message === 'Admin access required' || e.message === 'Unauthorized')
-        ) {
-          return false
+      } finally {
+        if (epoch === this.mailReadEpoch) {
+          this.inflightMailReadIds.clear()
+          this.scheduleMailReads()
         }
-        this.showError('标记阅读失败')
-        return false
       }
     },
 
@@ -2960,7 +3030,7 @@ function createMailAppState() {
     },
 
     get showDetailContent() {
-      return Boolean(this.activeMailDetail && !this.detailLoading)
+      return Boolean(this.activeMailDetail)
     },
 
     get detailChipClass() {
@@ -3027,7 +3097,7 @@ function createMailAppState() {
     },
 
     get hasDetailActions() {
-      return Boolean(this.activeMailDetail)
+      return Boolean(this.activeMailDetail && !this.detailLoading)
     },
 
     get htmlRenderModeButtonClass() {
@@ -3162,11 +3232,8 @@ function createMailAppState() {
           this.clearActiveMailState()
         }
         const listRequestPending = this.isRefreshing || this.mailLoadingMore
-        this.mails = this.mails.filter((item) => item.id !== id)
-        this.selectedIds = this.selectedIds.filter((selectedId) => Number(selectedId) !== id)
-        if (index >= 0) this.mailServerTotal = Math.max(0, this.mailServerTotal - 1)
+        this.removeMailsFromList([id])
         this.refreshMailUiState()
-        this.refreshMailListBoundaryState()
         if (listRequestPending) {
           await this.refetchCurrentMailQuery()
         } else if (wasActive && this.mails.length) {
@@ -3214,22 +3281,9 @@ function createMailAppState() {
       }
     },
 
-    async markSelectedAsRead() {
-      if (!this.selectedIds.length) return
-      const ids = [...this.selectedIds]
-      try {
-        await this.apiFetch('/api/admin/messages/read', {
-          method: 'PUT',
-          body: JSON.stringify({ ids: ids, read: 1 }),
-        })
-        await this.reconcileMailReadMutation(ids, {
-          preserveActiveMailOnMissing: false,
-          clearSelection: true,
-        })
-        await this.refreshStatsAfterMutation()
-      } catch (e) {
-        this.showError('标记阅读失败')
-      }
+    markSelectedAsRead() {
+      this.selectedIds.forEach((id) => this.queueMailRead(Number(id)))
+      this.clearSelectedIds()
     },
 
     // --- Utils --- //
