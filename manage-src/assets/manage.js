@@ -527,6 +527,8 @@ function createMailAppState() {
   return {
     // Global App State
     authorized: false,
+    // Async work may update state only while its login session is current.
+    authGeneration: 0,
     authInput: '',
     authInputVisible: false,
     authRememberChoice: false,
@@ -729,11 +731,14 @@ function createMailAppState() {
 
       this.authInput = storedAuth.token
       this.authRememberChoice = storedAuth.remember
-      const restored = await this.login({
+      const loginPromise = this.login({
         silent: true,
         skipWorkspaceReset: true,
         failureMessage: '已保存的密钥已失效，请重新输入',
       })
+      const generation = this.authGeneration
+      const restored = await loginPromise
+      if (generation !== this.authGeneration) return
       if (!restored && !readStoredAuthToken()) {
         this.authInput = ''
       }
@@ -752,15 +757,18 @@ function createMailAppState() {
       }
       this.authInput = trimmedKey
       this.authLoading = true
+      const generation = ++this.authGeneration
       try {
         // 用内部消息列表验证鉴权，同时读取当前 key 是否具备管理员能力。
         const data = await this.apiFetch('/api/admin/messages?limit=1')
+        if (generation !== this.authGeneration) return false
         this.adminAccessAvailable = Boolean(data?.permissions?.admin)
         this.authorized = true
         this.persistAuthSession()
         this.loadInitialData()
         return true
       } catch (e) {
+        if (generation !== this.authGeneration) return false
         const credentialsRejected = isCredentialRejectedError(e)
         this.authorized = false
         this.adminAccessAvailable = false
@@ -781,11 +789,12 @@ function createMailAppState() {
         }
         return false
       } finally {
-        this.authLoading = false
+        if (generation === this.authGeneration) this.authLoading = false
       }
     },
 
     logout() {
+      this.authGeneration += 1
       this.authorized = false
       this.clearAuthSession()
       this.authInput = ''
@@ -802,6 +811,10 @@ function createMailAppState() {
 
     toggleAuthInputVisibility() {
       this.authInputVisible = !this.authInputVisible
+    },
+
+    get authInputHidden() {
+      return !this.authInputVisible
     },
 
     get authInputType() {
@@ -1116,12 +1129,14 @@ function createMailAppState() {
     },
 
     async fetchStats() {
+      const generation = this.authGeneration
       try {
         const [summaryData, trendData, senderData] = await Promise.all([
           this.apiFetch('/api/analysis/summary'),
           this.apiFetch('/api/analysis/trend?days=14'),
           this.apiFetch('/api/analysis/senders?limit=5&days=14'),
         ])
+        if (generation !== this.authGeneration) return
 
         const s = summaryData.summary || {}
         this.stats = {
@@ -1142,6 +1157,7 @@ function createMailAppState() {
 
         this.renderCharts(trendData.trend?.series || [], senderData.senders || [])
       } catch (e) {
+        if (generation !== this.authGeneration) return
         const migrationRequired =
           e?.code === 'METRICS_MIGRATION_REQUIRED' ||
           String(e?.message || '').includes('Metrics tables missing')
@@ -1432,6 +1448,7 @@ function createMailAppState() {
     },
 
     async fetchGovernanceData(options = {}) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) return
       const force = options.force === true
       const showNotice = options.showNotice === true
@@ -1450,6 +1467,7 @@ function createMailAppState() {
           this.apiFetch('/api/admin/governance/status'),
           this.apiFetch('/api/admin/cleanup-rules'),
         ])
+        if (generation !== this.authGeneration) return
 
         const settings = normalizeGovernanceSettings(settingsData?.settings || {})
         this.governanceSettings = settings
@@ -1460,6 +1478,7 @@ function createMailAppState() {
         this.governanceNeedsRefresh = false
         this.governanceLastLoadedAt = Date.now()
       } catch (error) {
+        if (generation !== this.authGeneration) return
         this.governanceLoaded = true
         this.governanceLastLoadedAt = Date.now()
         if (this.consumeGovernanceError(error, { showNotice })) return
@@ -1467,7 +1486,9 @@ function createMailAppState() {
           this.showError('邮件治理数据加载失败: ' + error.message)
         }
       } finally {
-        this.governanceLoading = false
+        if (generation === this.authGeneration) {
+          this.governanceLoading = false
+        }
       }
     },
 
@@ -1573,6 +1594,7 @@ function createMailAppState() {
     },
 
     async saveGovernanceSettings() {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions || this.governanceSettingsSaving) return
 
       const retentionDays = toPositiveInt(
@@ -1593,21 +1615,27 @@ function createMailAppState() {
             retention_days: retentionDays,
           }),
         })
+        if (generation !== this.authGeneration) return
         this.governanceSettings = normalizeGovernanceSettings(data?.settings || {})
         await Promise.all([
           this.fetchGovernanceData({ force: true, showNotice: false }),
           this.refreshStatsAfterMutation(),
         ])
+        if (generation !== this.authGeneration) return
         this.showSuccess('保留策略已保存')
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError('保留策略保存失败: ' + error.message)
       } finally {
-        this.governanceSettingsSaving = false
+        if (generation === this.authGeneration) {
+          this.governanceSettingsSaving = false
+        }
       }
     },
 
     async runRetentionCleanup() {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions || this.governanceRetentionRunning) return
       if (!confirm('确定立即执行旧邮件保留清理吗？会删除超过保留天数的邮件。')) return
 
@@ -1616,22 +1644,28 @@ function createMailAppState() {
         const data = await this.apiFetch('/api/admin/governance/retention/run', {
           method: 'POST',
         })
+        if (generation !== this.authGeneration) return
         const result = data?.result || {}
         await this.syncGovernanceAffectedData()
+        if (generation !== this.authGeneration) return
         if (result?.skipped) {
           this.showSuccess('旧邮件保留清理已执行，当前策略处于关闭状态')
         } else {
           this.showSuccess(`旧邮件保留清理完成，删除 ${result?.deleted_count || 0} 封邮件`)
         }
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError('旧邮件保留清理失败: ' + error.message)
       } finally {
-        this.governanceRetentionRunning = false
+        if (generation === this.authGeneration) {
+          this.governanceRetentionRunning = false
+        }
       }
     },
 
     async previewGovernanceRule() {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions || this.governancePreviewLoading) return
 
       const payload = buildCleanupRulePayload(this.governanceForm)
@@ -1647,18 +1681,23 @@ function createMailAppState() {
           method: 'POST',
           body: JSON.stringify(payload),
         })
+        if (generation !== this.authGeneration) return
         this.governancePreviewMatchCount = Number(data?.preview?.match_count || 0)
         this.governancePreviewError = ''
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.governancePreviewMatchCount = null
         this.governancePreviewError = error.message || '预览失败'
       } finally {
-        this.governancePreviewLoading = false
+        if (generation === this.authGeneration) {
+          this.governancePreviewLoading = false
+        }
       }
     },
 
     async submitGovernanceRuleForm() {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions || this.governanceFormSubmitting) return
 
       const payload = buildCleanupRulePayload(this.governanceForm)
@@ -1682,19 +1721,25 @@ function createMailAppState() {
           method: requestMethod,
           body: JSON.stringify(payload),
         })
+        if (generation !== this.authGeneration) return
         await this.fetchGovernanceData({ force: true, showNotice: false })
+        if (generation !== this.authGeneration) return
         this.governanceFormOpen = false
         this.resetGovernanceForm()
         this.showSuccess(isEdit ? '清理规则已更新' : '清理规则已创建')
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError(`${isEdit ? '更新' : '创建'}清理规则失败: ${error.message}`)
       } finally {
-        this.governanceFormSubmitting = false
+        if (generation === this.authGeneration) {
+          this.governanceFormSubmitting = false
+        }
       }
     },
 
     async toggleCleanupRuleEnabled(rule) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) return
       if (this.governanceRuleActionId) return
       const target = this.findCleanupRuleById(rule?.id || 0) || rule
@@ -1709,16 +1754,21 @@ function createMailAppState() {
             enabled: nextEnabled,
           }),
         })
+        if (generation !== this.authGeneration) return
         if (Number(this.governanceForm.id || 0) === target.id) {
           this.governanceForm.enabled = Boolean(nextEnabled)
         }
         await this.fetchGovernanceData({ force: true, showNotice: false })
+        if (generation !== this.authGeneration) return
         this.showSuccess(`规则已${nextEnabled ? '启用' : '停用'}`)
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError(`规则${nextEnabled ? '启用' : '停用'}失败: ${error.message}`)
       } finally {
-        this.clearGovernanceRuleAction()
+        if (generation === this.authGeneration) {
+          this.clearGovernanceRuleAction()
+        }
       }
     },
 
@@ -1729,6 +1779,7 @@ function createMailAppState() {
     },
 
     async deleteCleanupRule(rule) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) return
       if (this.governanceRuleActionId) return
       const target = this.findCleanupRuleById(rule?.id || 0) || rule
@@ -1740,16 +1791,21 @@ function createMailAppState() {
         await this.apiFetch(`/api/admin/cleanup-rules/${target.id}`, {
           method: 'DELETE',
         })
+        if (generation !== this.authGeneration) return
         if (Number(this.governanceForm.id || 0) === target.id) {
           this.resetGovernanceForm()
         }
         await this.fetchGovernanceData({ force: true, showNotice: false })
+        if (generation !== this.authGeneration) return
         this.showSuccess('清理规则已删除')
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError('删除清理规则失败: ' + error.message)
       } finally {
-        this.clearGovernanceRuleAction()
+        if (generation === this.authGeneration) {
+          this.clearGovernanceRuleAction()
+        }
       }
     },
 
@@ -1760,6 +1816,7 @@ function createMailAppState() {
     },
 
     async runCleanupRule(rule) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) return
       if (this.governanceRuleActionId) return
       const target = this.findCleanupRuleById(rule?.id || 0) || rule
@@ -1771,16 +1828,21 @@ function createMailAppState() {
         const data = await this.apiFetch(`/api/admin/cleanup-rules/${target.id}/run`, {
           method: 'POST',
         })
+        if (generation !== this.authGeneration) return
         const result = data?.result || {}
         await this.syncGovernanceAffectedData()
+        if (generation !== this.authGeneration) return
         this.showSuccess(
           `规则已执行，命中 ${result?.match_count || 0} 封，删除 ${result?.deleted_count || 0} 封`
         )
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError('执行清理规则失败: ' + error.message)
       } finally {
-        this.clearGovernanceRuleAction()
+        if (generation === this.authGeneration) {
+          this.clearGovernanceRuleAction()
+        }
       }
     },
 
@@ -1791,6 +1853,7 @@ function createMailAppState() {
     },
 
     async runAllCleanupRules() {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions || this.governanceRulesRunning) return
       if (!this.hasEnabledCleanupRules) {
         this.showError('当前没有启用中的清理规则')
@@ -1803,8 +1866,10 @@ function createMailAppState() {
         const data = await this.apiFetch('/api/admin/cleanup-rules/run', {
           method: 'POST',
         })
+        if (generation !== this.authGeneration) return
         const result = data?.result || {}
         await this.syncGovernanceAffectedData()
+        if (generation !== this.authGeneration) return
         const errorCount = Array.isArray(result?.errors) ? result.errors.length : 0
         const message = `已执行 ${result?.rule_count || 0} 条规则，删除 ${result?.deleted_count || 0} 封邮件`
         if (errorCount > 0) {
@@ -1813,10 +1878,13 @@ function createMailAppState() {
           this.showSuccess(message)
         }
       } catch (error) {
+        if (generation !== this.authGeneration) return
         if (this.consumeGovernanceError(error, { showNotice: true })) return
         this.showError('执行全部规则失败: ' + error.message)
       } finally {
-        this.governanceRulesRunning = false
+        if (generation === this.authGeneration) {
+          this.governanceRulesRunning = false
+        }
       }
     },
 
@@ -2127,34 +2195,40 @@ function createMailAppState() {
     },
 
     async fetchManagedDomains(options = {}) {
+      const generation = this.authGeneration
       this.domainsLoading = true
       try {
         const data = await this.apiFetch('/api/admin/domains')
-        this.adminAccessAvailable = true
+        if (generation !== this.authGeneration) return
         this.setManagedDomains(data.domains || [])
       } catch (e) {
-        if (options.silentForbidden && e.message === 'Admin access required') {
+        if (generation !== this.authGeneration) return
+        if (e.message === 'Admin access required') {
           this.adminAccessAvailable = false
           this.managedDomains = []
-          return
+          if (options.silentForbidden) return
         }
         this.showError('域名池加载失败: ' + e.message)
       } finally {
-        this.domainsLoading = false
+        if (generation === this.authGeneration) {
+          this.domainsLoading = false
+        }
       }
     },
 
     async syncManagedDomains() {
+      const generation = this.authGeneration
       if (this.domainsSyncing) return
       this.domainsSyncing = true
       try {
         const data = await this.apiFetch('/api/admin/domains/sync', {
           method: 'POST',
         })
-        this.adminAccessAvailable = true
+        if (generation !== this.authGeneration) return
         this.setManagedDomains(data.domains || [])
         this.showSuccess(`域名同步完成，共 ${data.synced_count || 0} 个 Zone`)
       } catch (e) {
+        if (generation !== this.authGeneration) return
         if (e.message === 'Admin access required') {
           this.adminAccessAvailable = false
           this.managedDomains = []
@@ -2162,7 +2236,9 @@ function createMailAppState() {
         }
         this.showError('域名同步失败: ' + e.message)
       } finally {
-        this.domainsSyncing = false
+        if (generation === this.authGeneration) {
+          this.domainsSyncing = false
+        }
       }
     },
 
@@ -2197,6 +2273,7 @@ function createMailAppState() {
     },
 
     async toggleDomainIssuable(domain) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) {
         this.showError('当前密钥为只读，无法修改域名发放状态')
         return
@@ -2213,10 +2290,12 @@ function createMailAppState() {
             }),
           }
         )
+        if (generation !== this.authGeneration) return
         if (data?.domain) {
           this.replaceManagedDomain(data.domain)
         }
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('域名发放状态更新失败: ' + e.message)
       }
     },
@@ -2265,6 +2344,7 @@ function createMailAppState() {
     },
 
     async setSelectedManagedDomainsIssuable(issuableEnabled) {
+      const generation = this.authGeneration
       if (this.domainsBatchUpdating || !this.selectedDomainZoneIds.length) return
       if (!this.canUseAdminActions) {
         this.showError('当前密钥为只读，无法批量修改域名发放状态')
@@ -2280,15 +2360,20 @@ function createMailAppState() {
             issuable_enabled: issuableEnabled ? 1 : 0,
           }),
         })
+        if (generation !== this.authGeneration) return
         this.clearSelectedManagedDomains()
         await this.fetchManagedDomains()
+        if (generation !== this.authGeneration) return
         this.showSuccess(
           `已${issuableEnabled ? '启用' : '停用'} ${data?.updated_count || 0} 个域名发放状态`
         )
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError(`批量${issuableEnabled ? '启用' : '停用'}失败: ${e.message}`)
       } finally {
-        this.domainsBatchUpdating = false
+        if (generation === this.authGeneration) {
+          this.domainsBatchUpdating = false
+        }
       }
     },
 
@@ -2301,12 +2386,14 @@ function createMailAppState() {
     },
 
     async generateManagedAddress() {
+      const generation = this.authGeneration
       if (this.addressGenerating) return
       this.addressGenerating = true
       try {
         const data = await this.apiFetch('/api/mailboxes', {
           method: 'POST',
         })
+        if (generation !== this.authGeneration) return
         const mailbox = data?.mailbox || {}
         const generatedEmail = String(mailbox?.address || '').trim()
         if (!generatedEmail) {
@@ -2322,9 +2409,12 @@ function createMailAppState() {
         }
         this.scrollGeneratedAddressCardIntoView()
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('生成邮箱失败: ' + e.message)
       } finally {
-        this.addressGenerating = false
+        if (generation === this.authGeneration) {
+          this.addressGenerating = false
+        }
       }
     },
 
@@ -2362,10 +2452,12 @@ function createMailAppState() {
     },
 
     async copyGeneratedAddress() {
+      const generation = this.authGeneration
       if (!this.generatedEmail) return
 
       try {
         await this.copyTextToClipboard(this.generatedEmail)
+        if (generation !== this.authGeneration) return
         this.generatedAddressCopyState = 'done'
         if (this.generatedAddressCopyTimer) {
           clearTimeout(this.generatedAddressCopyTimer)
@@ -2375,6 +2467,7 @@ function createMailAppState() {
           this.generatedAddressCopyTimer = null
         }, 1800)
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.generatedAddressCopyState = 'failed'
         this.showError('复制邮箱失败，请手动复制')
         if (this.generatedAddressCopyTimer) {
@@ -3033,6 +3126,10 @@ function createMailAppState() {
       return Boolean(this.activeMailDetail)
     },
 
+    get detailContentVisible() {
+      return !this.detailLoading
+    },
+
     get detailChipClass() {
       const status = String(this.activeMailDetail?.parse_status || '')
       return status === 'parsed' || status === 'parsed_source_truncated'
@@ -3161,6 +3258,7 @@ function createMailAppState() {
     },
 
     async toggleStar(mail) {
+      const generation = this.authGeneration
       if (!this.canUseAdminActions) {
         this.showError('当前密钥为只读，无法修改星标')
         return
@@ -3172,12 +3270,15 @@ function createMailAppState() {
           method: 'PUT',
           body: JSON.stringify({ ids: [id], starred: nextStar ? 1 : 0 }),
         })
+        if (generation !== this.authGeneration) return
         if (this.activeMailDetail && this.activeMailDetail.id === id) {
           this.activeMailDetail.is_starred = nextStar
         }
         await this.refetchCurrentMailQuery()
+        if (generation !== this.authGeneration) return
         await this.refreshStatsAfterMutation()
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('星标修改失败')
       }
     },
@@ -3215,12 +3316,15 @@ function createMailAppState() {
     },
 
     async deleteMail(mail) {
+      const generation = this.authGeneration
       if (!confirm(`确定删除邮件「${mail.subject || '无主题'}」吗？此操作不可撤销。`)) return
       const id = mail.id
       const list = this.$refs.mailList
       try {
         await this.apiFetch(`/api/admin/messages/${id}`, { method: 'DELETE' })
+        if (generation !== this.authGeneration) return
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('删除失败')
         return
       }
@@ -3236,20 +3340,26 @@ function createMailAppState() {
         this.refreshMailUiState()
         if (listRequestPending) {
           await this.refetchCurrentMailQuery()
+          if (generation !== this.authGeneration) return
         } else if (wasActive && this.mails.length) {
           const next = this.mails[Math.max(0, Math.min(index, this.mails.length - 1))]
           await this.$nextTick()
+          if (generation !== this.authGeneration) return
           list.querySelector(`.email-card[data-mail-id="${next.id}"]`)?.focus({ preventScroll: true })
           await this.openMail(next)
+          if (generation !== this.authGeneration) return
         }
         await this.refreshStatsAfterMutation()
+        if (generation !== this.authGeneration) return
         this.showSuccess('邮件已删除')
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('邮件已删除，但界面更新失败，请刷新列表')
       }
     },
 
     async deleteSelected() {
+      const generation = this.authGeneration
       if (!this.selectedIds.length) return
       if (!confirm(`确定批量删除这 ${this.selectedIds.length} 封邮件吗？`)) return
 
@@ -3262,6 +3372,7 @@ function createMailAppState() {
           method: 'POST',
           body: JSON.stringify({ ids }),
         })
+        if (generation !== this.authGeneration) return
         const deleted =
           Array.isArray(result.deleted) && result.deleted.length > 0 ? result.deleted : ids
         const deletedIds = new Set(deleted.map((id) => Number(id)))
@@ -3269,7 +3380,9 @@ function createMailAppState() {
           this.clearActiveMailState()
         }
         await this.resetMailQueryToInbox({ preserveSort: true })
+        if (generation !== this.authGeneration) return
         await this.refreshStatsAfterMutation()
+        if (generation !== this.authGeneration) return
         const missing = Array.isArray(result.missing) ? result.missing : []
         if (missing.length > 0) {
           this.showSuccess(`已删除 ${deletedIds.size} 封，${missing.length} 封已不存在`)
@@ -3277,6 +3390,7 @@ function createMailAppState() {
           this.showSuccess(`已删除 ${deletedIds.size} 封邮件`)
         }
       } catch (e) {
+        if (generation !== this.authGeneration) return
         this.showError('部分删除失败，请重试')
       }
     },

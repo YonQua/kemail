@@ -24,3 +24,5 @@ task_plan.md
 test_mail_api.py
 wrangler.toml
 CHANGELOG.md
+
+.generated/

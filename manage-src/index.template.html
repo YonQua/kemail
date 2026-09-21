@@ -34,7 +34,7 @@
                     <button type="button" class="btn btn-icon auth-visibility-btn" :disabled="authLoading"
                         :aria-label="authVisibilityButtonTitle" :title="authVisibilityButtonTitle"
                         @click="toggleAuthInputVisibility">
-                        <template x-if="!authInputVisible">
+                        <template x-if="authInputHidden">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
                                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
                                 stroke-linejoin="round" aria-hidden="true" focusable="false" width="16" height="16">
@@ -753,7 +753,7 @@
                     </template>
 
                     <template x-if="showDetailContent">
-                        <div class="detail-content-stack" x-show="!detailLoading">
+                        <div class="detail-content-stack" x-show="detailContentVisible">
                             <!-- Envelope Info -->
                             <div class="mail-header-info">
                                 <h3 class="mail-subject-large" x-text="detailSubjectLabel"></h3>

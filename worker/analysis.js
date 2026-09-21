@@ -14,11 +14,10 @@ import {
 import { parseMessageLimit } from './query.js'
 import { logError } from './text-logging.js'
 
+// A short-lived UI cache should not grow with the number of parameter combinations.
+const MAX_ANALYSIS_CACHE_ENTRIES = 128
 const analysisResponseCache = new Map()
-
-function getAnalysisCacheKey(path, url) {
-  return `${path}?${url.searchParams.toString()}`
-}
+let analysisCacheGeneration = 0
 
 function readAnalysisMemoryCache(cacheKey) {
   const cached = analysisResponseCache.get(cacheKey)
@@ -31,9 +30,17 @@ function readAnalysisMemoryCache(cacheKey) {
 }
 
 function writeAnalysisMemoryCache(cacheKey, payload) {
+  const now = Date.now()
+  for (const [key, cached] of analysisResponseCache) {
+    if (cached.expiresAt <= now) analysisResponseCache.delete(key)
+  }
+  analysisResponseCache.delete(cacheKey)
+  if (analysisResponseCache.size >= MAX_ANALYSIS_CACHE_ENTRIES) {
+    analysisResponseCache.delete(analysisResponseCache.keys().next().value)
+  }
   analysisResponseCache.set(cacheKey, {
     payload,
-    expiresAt: Date.now() + ANALYSIS_CACHE_TTL * 1000,
+    expiresAt: now + ANALYSIS_CACHE_TTL * 1000,
   })
 }
 
@@ -48,24 +55,28 @@ function isMissingMetricsTableError(error) {
 }
 
 export function invalidateAnalysisMemoryCache() {
+  analysisCacheGeneration += 1
   analysisResponseCache.clear()
 }
 
-async function respondWithAnalysisCache(path, url, producer) {
-  const cacheKey = getAnalysisCacheKey(path, url)
+async function respondWithAnalysisCache(cacheKey, producer) {
   const cachedPayload = readAnalysisMemoryCache(cacheKey)
   if (cachedPayload) {
     return jsonResponse(cachedPayload, 200, analysisCacheHeaders())
   }
 
+  const generation = analysisCacheGeneration
   const payload = await producer()
-  writeAnalysisMemoryCache(cacheKey, payload)
+  // A query started before invalidation must not repopulate the cache afterwards.
+  if (generation === analysisCacheGeneration) {
+    writeAnalysisMemoryCache(cacheKey, payload)
+  }
   return jsonResponse(payload, 200, analysisCacheHeaders())
 }
 
 export async function handleAnalysisSummaryRequest(url, env, path) {
   try {
-    return await respondWithAnalysisCache(path, url, async () => {
+    return await respondWithAnalysisCache('summary', async () => {
       const currentSummary = await readCurrentMailboxSummary(env)
       let effectiveRetentionDays = -1
       try {
@@ -121,7 +132,7 @@ export async function handleAnalysisTrendRequest(url, env, path) {
   const days = parseAnalysisDays(url, 14)
 
   try {
-    return await respondWithAnalysisCache(path, url, async () => {
+    return await respondWithAnalysisCache(`trend:${days}`, async () => {
       const range = buildUtcDayRange(days)
       const series = await readHistoricalTrend(env, {
         startDay: range.startDay,
@@ -161,7 +172,7 @@ export async function handleAnalysisSendersRequest(url, env, path) {
   const days = parseAnalysisDays(url, 14)
 
   try {
-    return await respondWithAnalysisCache(path, url, async () => {
+    return await respondWithAnalysisCache(`senders:${days}:${limit}`, async () => {
       const range = buildUtcDayRange(days)
       const senders = await readHistoricalTopSenders(env, {
         startDay: range.startDay,

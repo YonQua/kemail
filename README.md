@@ -262,7 +262,9 @@ npm install -g wrangler@latest
 
 - `npm run dev`：本地开发
 - `npm run dev:scheduled`：本地开发，并通过 `wrangler dev --test-scheduled` 测试 scheduled handler
-- `npm run build:manage`：生成本地 `public/` 静态产物
+- `npm run build:manage`：先检查 Alpine CSP 模板绑定，再生成本地 `public/` 静态产物
+- 管理端 OpenAPI JSON 生成到 `.generated/`，由 Worker 打包并在管理员鉴权后返回；`public/` 只存放公开资源。直接使用 Wrangler 前也须先执行资源构建。
+- HTML CSP 统一定义于 `worker/constants.js`，构建出的 `_headers` 与 Worker 响应共用该策略。
 - `npm run verify:predeploy`：构建 + `wrangler deploy --dry-run`
 - `npm run deploy`：构建 + 正式部署
 

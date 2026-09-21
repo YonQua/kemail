@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { APP_RELEASE_TAG } from '../version.js'
+import { HTML_CSP } from '../worker/constants.js'
+import { checkAlpineTemplate } from './check-alpine-template.mjs'
 
 const rootDir = process.cwd()
 const sourceDir = path.join(rootDir, 'manage-src')
@@ -9,6 +11,7 @@ const sourceAssetsDir = path.join(sourceDir, 'assets')
 const sourceVendorDir = path.join(sourceDir, 'vendor')
 const specsDir = path.join(rootDir, 'specs')
 const publicDir = path.join(rootDir, 'public')
+const privateOutputDir = path.join(rootDir, '.generated')
 const publicAssetsDir = path.join(publicDir, 'assets')
 const MANAGED_ASSET_NAMES = new Set([
   'manage',
@@ -17,9 +20,6 @@ const MANAGED_ASSET_NAMES = new Set([
   'vendor-chart',
   'vendor-alpine',
 ])
-const HTML_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-
 function isManagedAsset(filename) {
   const match = filename.match(/^([a-z-]+)\.[a-f0-9]{10}\.(css|js)$/)
   if (!match) return false
@@ -360,10 +360,11 @@ function renderDocsAppHtml(template, options) {
 }
 
 function buildManageAssets() {
-  ensureDir(publicAssetsDir)
-
   const htmlTemplate = readFile(path.join(sourceDir, 'index.template.html'))
   const docsAppTemplate = readFile(path.join(sourceDir, 'api-docs.template.html'))
+  checkAlpineTemplate(htmlTemplate, 'manage-src/index.template.html')
+  checkAlpineTemplate(docsAppTemplate, 'manage-src/api-docs.template.html')
+  ensureDir(publicAssetsDir)
   const fullOpenapiSpec = readJson(path.join(specsDir, 'openapi.json'))
   const publicDocsSpec = sanitizeSpecForMachineConsumers(
     filterSpecByTags(fullOpenapiSpec, ['external-core'], {
@@ -479,7 +480,10 @@ function buildManageAssets() {
   removeGeneratedFile('admin-api-docs.html')
   writeFile(path.join(publicDir, 'api-docs-spec.json'), `${prettyJson(publicDocsSpec)}\n`)
   writeFile(path.join(publicDir, 'openapi.json'), `${prettyJson(publicOpenapiSpec)}\n`)
-  writeFile(path.join(publicDir, 'admin-openapi.json'), `${prettyJson(adminOpenapiSpec)}\n`)
+  ensureDir(privateOutputDir)
+  writeFile(path.join(privateOutputDir, 'admin-openapi.json'), `${prettyJson(adminOpenapiSpec)}\n`)
+  // Remove the former public artifact so existing checkouts cannot upload it.
+  removeGeneratedFile('admin-openapi.json')
 
   const headerLines = [
     '/index.html',

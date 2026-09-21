@@ -452,7 +452,7 @@ export async function handleApiRequest(request, env, url, path, resolvedRoute, r
     case 'adminDomainsList':
       return handleManagedDomainsRequest(request, env, path)
     case 'adminOpenapi':
-      return handleAdminOpenApiRequest(request, env, path)
+      return handleAdminOpenApiRequest()
     case 'adminDomainsSync':
       return handleManagedDomainSyncRequest(request, env, path)
     case 'adminDomainsBatch':

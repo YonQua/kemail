@@ -1,3 +1,6 @@
+export const HTML_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
 export const ANALYSIS_CACHE_TTL = 20
 export const RATE_LIMIT = 60
 export const RATE_WINDOW = 60
@@ -44,8 +47,7 @@ export const JSON_SECURITY_HEADERS = {
 export const HTML_SECURITY_HEADERS = {
   ...RESPONSE_SECURITY_HEADERS,
   'X-Frame-Options': 'DENY',
-  'Content-Security-Policy':
-    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  'Content-Security-Policy': HTML_CSP,
 }
 export const JSON_RESPONSE_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',

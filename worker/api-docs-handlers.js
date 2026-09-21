@@ -1,5 +1,6 @@
-import { fetchStaticAssetByPath } from './static-assets.js'
+import adminOpenapi from '../.generated/admin-openapi.json' with { type: 'json' }
+import { jsonResponse } from './http.js'
 
-export async function handleAdminOpenApiRequest(request, env) {
-  return fetchStaticAssetByPath(request, env, '/admin-openapi.json', '/openapi.json')
+export function handleAdminOpenApiRequest() {
+  return jsonResponse(adminOpenapi)
 }

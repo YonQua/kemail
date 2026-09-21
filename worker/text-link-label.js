@@ -1,4 +1,4 @@
-import { compactDisplayText, normalizeText } from './text-core.js'
+import { compactDisplayText } from './text-core.js'
 
 const LOW_SIGNAL_LINK_PATTERNS = [
   /\bread\s*more\b/i,
@@ -137,46 +137,30 @@ export function normalizeActionLinkLabel(label, url) {
   return bestText
 }
 
+// Extraction owns URL normalization, deduplication and candidate budgets.
 export function rankActionLinks(candidates) {
-  if (!Array.isArray(candidates) || candidates.length === 0) return []
-
-  const deduped = []
-  const seen = new Set()
-  for (const candidate of candidates) {
-    const url = normalizeText(candidate?.url)
-    if (!url || seen.has(url)) continue
-    seen.add(url)
-    deduped.push({
-      label: normalizeText(candidate?.label),
-      url,
-      order: Number.isFinite(candidate?.order) ? candidate.order : deduped.length,
-      positionRatio:
-        Number.isFinite(candidate?.positionRatio) && candidate.positionRatio >= 0
-          ? candidate.positionRatio
-          : 1,
-      context: normalizeText(candidate?.context || ''),
-      isButton: Boolean(candidate?.isButton),
-    })
-  }
-  if (deduped.length === 0) return []
+  if (candidates.length === 0) return []
 
   const hostCounts = new Map()
   const labelCounts = new Map()
-  deduped.forEach((item) => {
+  const links = candidates.map((item) => {
+    const parsed = parseUrlSafe(item.url)
+    const host = parsed ? parsed.host.toLowerCase() : ''
     if (item.label) {
       labelCounts.set(item.label, (labelCounts.get(item.label) || 0) + 1)
     }
-    const parsed = parseUrlSafe(item.url)
-    const host = parsed ? parsed.host.toLowerCase() : ''
     if (host) hostCounts.set(host, (hostCounts.get(host) || 0) + 1)
+    return {
+      ...item,
+      host,
+      pathname: parsed?.pathname || '',
+      search: parsed?.search || '',
+    }
   })
 
-  const scored = deduped
+  const scored = links
     .map((item) => {
-      const parsed = parseUrlSafe(item.url)
-      const host = parsed ? parsed.host.toLowerCase() : ''
-      const pathname = parsed ? parsed.pathname || '' : ''
-      const search = parsed ? parsed.search || '' : ''
+      const { host, pathname, search } = item
       const labelLength = item.label.length
       const digitCount = (item.label.match(/\d/g) || []).length
 
