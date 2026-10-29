@@ -51,6 +51,7 @@ function createDefaultStatsState() {
 function createDefaultMailQuery() {
   return {
     address: '',
+    sender: '',
     query: '',
     sort: 'desc',
     unread: false,
@@ -61,6 +62,7 @@ function createDefaultMailQuery() {
 function normalizeMailQuery(query = {}) {
   return {
     address: String(query?.address || '').trim(),
+    sender: String(query?.sender || '').trim(),
     query: String(query?.query || '').trim(),
     sort: query?.sort === 'asc' ? 'asc' : 'desc',
     unread: query?.unread === true,
@@ -874,6 +876,7 @@ function createMailAppState() {
       if (query.address) {
         params.set('address', query.address)
       }
+      if (query.sender) params.set('sender', query.sender)
       if (query.query) {
         params.set('q', query.query)
       }
@@ -2707,7 +2710,7 @@ function createMailAppState() {
 
     get hasAppliedMailFilters() {
       const query = this.mailQueryApplied
-      return Boolean(query.address || query.query || query.unread || query.starred)
+      return Boolean(query.address || query.sender || query.query || query.unread || query.starred)
     },
 
     toggleUnreadFilter() {
@@ -2875,11 +2878,15 @@ function createMailAppState() {
       const activeMailId = this.activeMail ? this.activeMail.id : null
       const selectedIds = new Set(this.selectedIds.map((id) => String(id)))
       this.mails.forEach((mail) => {
-        mail.card_class = {
-          active: Boolean(activeMailId && activeMailId === mail.id),
-          unread: !mail.is_read,
+        const active = mail.id === activeMailId
+        const unread = !mail.is_read
+        if (mail.card_class?.active !== active || mail.card_class?.unread !== unread) {
+          mail.card_class = { active, unread }
         }
-        mail.star_button_class = { starred: Boolean(mail.is_starred) }
+        const starred = Boolean(mail.is_starred)
+        if (mail.star_button_class?.starred !== starred) {
+          mail.star_button_class = { starred }
+        }
         mail.star_fill = mail.is_starred ? 'currentColor' : 'none'
         mail.is_selected = selectedIds.has(String(mail.id))
       })
@@ -2914,6 +2921,7 @@ function createMailAppState() {
       this.detailController?.abort()
       this.detailController = null
       this.detailLoading = false
+      if (this.activeMailDetail?.id !== this.activeMail?.id) this.activeMailDetail = null
     },
 
     clearActiveMailState() {
@@ -2975,6 +2983,34 @@ function createMailAppState() {
       await this.openMail(mail)
     },
 
+    get detailSenderAddress() {
+      const sender = String(this.activeMailDetail?.sender || '').trim()
+      return sender.match(/<([^<>]+)>/)?.[1]?.trim() || sender
+    },
+
+    async copyMailAddress(event) {
+      const value = event.currentTarget.dataset.address
+      if (!value) return
+      try {
+        await this.copyTextToClipboard(value)
+        this.showSuccess('邮箱地址已复制')
+      } catch (_) {
+        this.showError('复制失败，请手动选择地址复制')
+      }
+    },
+
+    async filterMailAddress(event) {
+      const { field, address } = event.currentTarget.dataset
+      if (!address || !['address', 'sender'].includes(field)) return
+      this.mailQueryDraft = { ...createDefaultMailQuery(), sort: this.mailQueryApplied.sort, [field]: address }
+      await this.applyMailFilters()
+    },
+
+    async clearSenderFilter() {
+      this.mailQueryDraft = { ...this.mailQueryApplied, sender: '' }
+      await this.applyMailFilters()
+    },
+
     showMailDetail(detail) {
       // Content is cached; mutable flags follow the current list and confirmed writes.
       detail.is_read = Boolean(this.activeMail.is_read || this.confirmedMailReadIds.has(detail.id))
@@ -3002,7 +3038,7 @@ function createMailAppState() {
         return
       }
 
-      this.activeMailDetail = null
+      // Hide the previous detail while loading, retaining its DOM and iframe for reuse.
       this.detailLoading = true
       const controller = new AbortController()
       this.detailController = controller
@@ -3018,6 +3054,7 @@ function createMailAppState() {
         this.showMailDetail(detail)
       } catch (error) {
         if (this.detailController !== controller) return
+        this.activeMailDetail = null
         this.showError(controller.signal.aborted ? '邮件加载超时，请重新打开重试' : '邮件详情加载失败')
       } finally {
         clearTimeout(timeout)

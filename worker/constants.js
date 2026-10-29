@@ -1,5 +1,6 @@
+// srcdoc 邮件正文继承页面 CSP；这里必须允许正文使用的 HTTPS 图片。
 export const HTML_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' https: data:; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 export const ANALYSIS_CACHE_TTL = 20
 export const RATE_LIMIT = 60

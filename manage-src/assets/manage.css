@@ -1663,23 +1663,47 @@ body {
   margin-bottom: 16px;
   line-height: 1.3;
 }
+.sender-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.sender-filter > span {
+  min-width: 0;
+}
 .mail-meta-grid {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
 }
 .meta-row {
   display: flex;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 14px;
 }
 .meta-label {
   color: var(--text-muted);
-  width: 60px;
   flex-shrink: 0;
 }
 .meta-value {
   color: var(--text-main);
-  word-break: break-all;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.meta-actions {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.meta-actions .btn {
+  padding: 2px 7px;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .mail-toolbar {
   padding: 12px 24px;

@@ -623,6 +623,12 @@
                         <input type="text" :value="mailQueryDraft.query" placeholder="关键词：主题、发件人、收件人"
                             @input="updateFilterKeyword" @keyup.enter="applyMailFilters" />
                     </div>
+                    <template x-if="mailQueryApplied.sender">
+                        <div class="sender-filter">
+                            <span>发件人包含：<span x-text="mailQueryApplied.sender"></span></span>
+                            <button type="button" class="btn btn-secondary" @click="clearSenderFilter">清除</button>
+                        </div>
+                    </template>
                     <div class="list-controls-row">
                         <select :value="mailQueryDraft.sort" @change="updateSortOrder" class="controls-select">
                             <option value="desc">最新在前</option>
@@ -761,10 +767,18 @@
                                     <div class="meta-row">
                                         <span class="meta-label">发件人</span>
                                         <strong class="meta-value" x-text="activeMailDetail.sender"></strong>
+                                        <span class="meta-actions">
+                                            <button type="button" class="btn btn-secondary" :data-address="detailSenderAddress" @click="copyMailAddress" aria-label="复制发件人地址">复制</button>
+                                            <button type="button" class="btn btn-secondary" :data-address="detailSenderAddress" data-field="sender" @click="filterMailAddress" aria-label="按发件人筛选">筛选</button>
+                                        </span>
                                     </div>
                                     <div class="meta-row">
                                         <span class="meta-label">收件人</span>
                                         <span class="meta-value" x-text="activeMailDetail.recipient"></span>
+                                        <span class="meta-actions">
+                                            <button type="button" class="btn btn-secondary" :data-address="activeMailDetail.recipient" @click="copyMailAddress" aria-label="复制收件人地址">复制</button>
+                                            <button type="button" class="btn btn-secondary" :data-address="activeMailDetail.recipient" data-field="address" @click="filterMailAddress" aria-label="按收件人筛选">筛选</button>
+                                        </span>
                                     </div>
                                     <div class="meta-row">
                                         <span class="meta-label">时间</span>
