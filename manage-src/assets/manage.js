@@ -21,6 +21,8 @@ const ACTION_LINK_KEEP_LIMIT = 10
 const ACTION_LINK_MIN_SCORE = 6
 const GOVERNANCE_REFRESH_INTERVAL_MS = 20 * 1000
 const DEFAULT_GOVERNANCE_RETENTION_DAYS = 3
+const MAIL_DETAIL_CACHE_LIMIT = 20
+const MAIL_DETAIL_TIMEOUT_MS = 15000
 const MAIL_PAGE_SIZE = 50
 const MAIL_READ_BATCH_DELAY_MS = 150
 const MAIL_READ_INTERVAL_MS = 1100
@@ -112,20 +114,18 @@ function clearStoredAuthTokens() {
 
 function readStoredAuthToken() {
   const sessionToken = readStorageAuthToken(window.sessionStorage, AUTH_STORAGE_KEYS.session)
+  const persistentToken = readStorageAuthToken(window.localStorage, AUTH_STORAGE_KEYS.persistent)
   if (sessionToken) {
     return {
       token: sessionToken,
-      remember: false,
-      source: 'session',
+      remember: sessionToken === persistentToken,
     }
   }
 
-  const persistentToken = readStorageAuthToken(window.localStorage, AUTH_STORAGE_KEYS.persistent)
   if (persistentToken) {
     return {
       token: persistentToken,
       remember: true,
-      source: 'persistent',
     }
   }
 
@@ -612,7 +612,8 @@ function createMailAppState() {
     activeMailDetail: null,
     detailLoading: false,
     renderMode: 'text', // 'html', 'text', 'source'
-    detailRequestToken: 0,
+    detailController: null,
+    detailCache: new Map(),
     pendingMailReadIds: new Set(),
     inflightMailReadIds: new Set(),
     confirmedMailReadIds: new Set(),
@@ -667,6 +668,7 @@ function createMailAppState() {
       this.inflightMailReadIds.clear()
       this.confirmedMailReadIds.clear()
       this.clearActiveMailState()
+      this.detailCache.clear()
       this.clearGlobalNotice()
       this.stats = createDefaultStatsState()
       this.statsNeedsRefresh = false
@@ -733,6 +735,7 @@ function createMailAppState() {
       this.authRememberChoice = storedAuth.remember
       const loginPromise = this.login({
         silent: true,
+        restore: true,
         skipWorkspaceReset: true,
         failureMessage: '已保存的密钥已失效，请重新输入',
       })
@@ -764,7 +767,8 @@ function createMailAppState() {
         if (generation !== this.authGeneration) return false
         this.adminAccessAvailable = Boolean(data?.permissions?.admin)
         this.authorized = true
-        this.persistAuthSession()
+        // Restoring verifies credentials; only an explicit login changes storage preference.
+        if (options.restore !== true) this.persistAuthSession()
         this.loadInitialData()
         return true
       } catch (e) {
@@ -2629,6 +2633,8 @@ function createMailAppState() {
     // --- Mail List & Actions --- //
 
     async fetchMails() {
+      this.cancelDetailRequest()
+      this.detailCache.clear()
       this.confirmedMailReadIds.clear()
       this.isRefreshing = true
       this.mailLoadingMore = false
@@ -2904,9 +2910,14 @@ function createMailAppState() {
       }
     },
 
-    clearActiveMailState() {
-      this.detailRequestToken += 1
+    cancelDetailRequest() {
+      this.detailController?.abort()
+      this.detailController = null
       this.detailLoading = false
+    },
+
+    clearActiveMailState() {
+      this.cancelDetailRequest()
       this.activeMail = null
       this.activeMailDetail = null
       this.isMobileDrawerOpen = false
@@ -2964,37 +2975,54 @@ function createMailAppState() {
       await this.openMail(mail)
     },
 
+    showMailDetail(detail) {
+      // Content is cached; mutable flags follow the current list and confirmed writes.
+      detail.is_read = Boolean(this.activeMail.is_read || this.confirmedMailReadIds.has(detail.id))
+      detail.is_starred = this.activeMail.is_starred
+      this.activeMailDetail = detail
+      this.showAllActionLinks = false
+      this.renderMode = detail.content?.html ? 'html' : 'text'
+      this.resetDetailScroll()
+    },
+
     async openMail(mail) {
-      const requestToken = ++this.detailRequestToken
+      this.isMobileDrawerOpen = true
+      if (this.activeMail?.id === mail.id && this.detailLoading) return
+
+      this.cancelDetailRequest()
       this.activeMail = this.findMailById(mail.id) || mail
       this.queueMailRead(mail.id)
       this.refreshMailUiState()
-      this.detailLoading = true
-      this.isMobileDrawerOpen = true // Open drawer on mobile
 
+      const cached = this.detailCache.get(mail.id)
+      if (cached) {
+        this.detailCache.delete(mail.id)
+        this.detailCache.set(mail.id, cached)
+        this.showMailDetail(cached)
+        return
+      }
+
+      this.activeMailDetail = null
+      this.detailLoading = true
+      const controller = new AbortController()
+      this.detailController = controller
+      const timeout = setTimeout(() => controller.abort(), MAIL_DETAIL_TIMEOUT_MS)
       try {
-        const data = await this.apiFetch(`/api/admin/messages/${mail.id}`)
-        if (
-          requestToken !== this.detailRequestToken ||
-          !this.activeMail ||
-          this.activeMail.id !== mail.id
-        ) {
-          return
+        const data = await this.apiFetch(`/api/admin/messages/${mail.id}`, { signal: controller.signal })
+        if (this.detailController !== controller) return
+        const detail = this.decorateMailDetail(data.message || {})
+        this.detailCache.set(mail.id, detail)
+        if (this.detailCache.size > MAIL_DETAIL_CACHE_LIMIT) {
+          this.detailCache.delete(this.detailCache.keys().next().value)
         }
-        const preparedDetail = this.decorateMailDetail(data.message || {})
-        if (this.confirmedMailReadIds.has(mail.id) || this.activeMail.is_read) {
-          preparedDetail.is_read = 1
-        }
-        this.activeMailDetail = preparedDetail
-        this.showAllActionLinks = false
-        this.renderMode = this.activeMailDetail.content?.html ? 'html' : 'text'
-        this.resetDetailScroll()
-      } catch (e) {
-        if (requestToken !== this.detailRequestToken) return
-        this.showError('邮件详情加载失败')
-        this.activeMailDetail = null
+        this.showMailDetail(detail)
+      } catch (error) {
+        if (this.detailController !== controller) return
+        this.showError(controller.signal.aborted ? '邮件加载超时，请重新打开重试' : '邮件详情加载失败')
       } finally {
-        if (requestToken === this.detailRequestToken) {
+        clearTimeout(timeout)
+        if (this.detailController === controller) {
+          this.detailController = null
           this.detailLoading = false
         }
       }

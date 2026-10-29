@@ -1,3 +1,4 @@
+import { parseJsonPayload, parseBooleanFlag } from './request-input.js'
 import {
   handleAnalysisSendersRequest,
   handleAnalysisSummaryRequest,
@@ -60,15 +61,6 @@ function missingMessagesTableResponse() {
   return jsonResponse({ ok: false, error: 'emails 表不存在，请先执行 D1 迁移' }, 503)
 }
 
-async function parseJsonPayload(request, path, actionLabel) {
-  try {
-    return await request.json()
-  } catch (error) {
-    logError(`${actionLabel} payload parse failed`, error, { path })
-    return null
-  }
-}
-
 function validateBatchIds(ids) {
   if (!ids.length) {
     return jsonResponse({ ok: false, error: 'Missing ids' }, 400)
@@ -97,13 +89,6 @@ async function parseBatchMutationPayload(request, path, actionLabel) {
   }
 
   return { payload, ids, errorResponse: null }
-}
-
-function parseBooleanFlag(value, defaultValue = false) {
-  if (value == null || value === '') return defaultValue
-  if (value === true || value === 1 || value === '1') return true
-  if (value === false || value === 0 || value === '0') return false
-  return null
 }
 
 async function parseMessagesNextPayload(request, path) {

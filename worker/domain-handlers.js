@@ -1,3 +1,4 @@
+import { parseJsonPayload } from './request-input.js'
 import { listCloudflareZones } from './cloudflare.js'
 import {
   ManagedDomainSyncGuardError,
@@ -46,15 +47,6 @@ function generateLocalPart() {
     .map((item) => item.toString(16).padStart(2, '0'))
     .join('')
   return `oc${suffix}`
-}
-
-async function parseJsonPayload(request, path, actionLabel) {
-  try {
-    return await request.json()
-  } catch (error) {
-    logError(`${actionLabel} payload parse failed`, error, { path })
-    return null
-  }
 }
 
 function normalizeZoneIdList(value) {

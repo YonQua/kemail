@@ -26,3 +26,4 @@ wrangler.toml
 CHANGELOG.md
 
 .generated/
+task_state.md

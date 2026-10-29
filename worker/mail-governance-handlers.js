@@ -1,3 +1,4 @@
+import { parseJsonPayload, parseBooleanFlag } from './request-input.js'
 import { invalidateAnalysisMemoryCache } from './analysis.js'
 import { jsonResponse } from './http.js'
 import {
@@ -30,22 +31,6 @@ function governanceMigrationRequiredResponse() {
     },
     503
   )
-}
-
-async function parseJsonPayload(request, path, actionLabel) {
-  try {
-    return await request.json()
-  } catch (error) {
-    logError(`${actionLabel} payload parse failed`, error, { path })
-    return null
-  }
-}
-
-function parseBooleanFlag(value, defaultValue = false) {
-  if (value == null || value === '') return defaultValue
-  if (value === true || value === 1 || value === '1') return true
-  if (value === false || value === 0 || value === '0') return false
-  return null
 }
 
 function buildGovernanceStatus(settings, totalRules, enabledRules) {
